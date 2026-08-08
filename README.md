@@ -100,6 +100,16 @@ curl -X POST http://127.0.0.1:27124/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
+**Windows / PowerShell:** the `\` line continuation above is Bash-only — PowerShell splits each line into its own command. Use `` ` `` instead, and call `curl.exe` explicitly (plain `curl` is a PowerShell alias for `Invoke-WebRequest`, which takes different flags):
+
+```powershell
+curl.exe -X POST http://127.0.0.1:27124/mcp `
+  -H "Authorization: Bearer <API-KEY-FROM-SETTINGS>" `
+  -H "Content-Type: application/json" `
+  -H "Accept: application/json, text/event-stream" `
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
 This should return a JSON-RPC response listing `vault_read`, `vault_patch`, and `search_query`.
 
 For Claude Desktop / Claude Code, add an HTTP MCP server entry pointing at the same URL and header, per that client's MCP configuration docs.
