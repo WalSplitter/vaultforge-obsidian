@@ -1,8 +1,12 @@
 # VaultForge
 
+<p align="center">
+  <img src="assets/logo.png" alt="VaultForge logo" width="180">
+</p>
+
 VaultForge is an Obsidian community plugin that embeds a local [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server directly inside your vault, giving Claude Code / Claude Desktop live read, write, and search access to your notes — no separate REST API or bridge process required.
 
-> **Status:** early development. Core MCP server and vault tools are functional; chat UI, template generation, and Claude Skills management are planned next.
+> **Status:** early development. Core MCP server, vault tools, the chat assistant, and Claude Skills management are functional; template generation is planned next.
 
 ## Table of contents
 
@@ -12,6 +16,8 @@ VaultForge is an Obsidian community plugin that embeds a local [MCP](https://mod
 - [Security model](#security-model)
 - [Installation](#installation)
 - [Connecting Claude to the server](#connecting-claude-to-the-server)
+- [Chat assistant](#chat-assistant)
+- [Claude Skills](#claude-skills)
 - [Development](#development)
 - [Testing](#testing)
 - [Project structure](#project-structure)
@@ -64,6 +70,7 @@ Because the server lives inside the same process as Obsidian, tool handlers call
 | `vault_read` | Reads a note's content by vault-relative path. |
 | `vault_patch` | Creates or edits a note. `mode`: `overwrite` (default), `append`, `prepend`, or `create` (fails if the file already exists). |
 | `search_query` | Case-insensitive substring search across all Markdown notes; returns matching paths with a snippet around each hit. |
+| `skills_list` | Lists Claude Skills found under the configured skills folder (name + description, parsed from each `SKILL.md`'s frontmatter). |
 
 ## Security model
 
@@ -113,6 +120,22 @@ curl.exe -X POST http://127.0.0.1:27124/mcp `
 This should return a JSON-RPC response listing `vault_read`, `vault_patch`, and `search_query`.
 
 For Claude Desktop / Claude Code, add an HTTP MCP server entry pointing at the same URL and header, per that client's MCP configuration docs.
+
+## Chat assistant
+
+VaultForge also ships a chat sidebar that talks to the Anthropic API directly from inside Obsidian (separate from, and independent of, the MCP server above — this is the plugin acting as a client, not a server).
+
+1. Open **Settings → VaultForge → Chat** and paste an Anthropic API key (stored device-locally via `loadLocalStorage`, same as the MCP bearer token — never written to `data.json`). Optionally override the model ID.
+2. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
+3. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients, executed directly against `app.vault` — every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
+
+This is a v1: responses are non-streaming (a single request/response per turn, via Obsidian's `requestUrl` to avoid CORS issues) and history is in-memory only, cleared on reload.
+
+## Claude Skills
+
+VaultForge treats a vault folder (default `Skills/`, configurable in settings) as a directory of Claude Skills — one subfolder per skill, each containing a `SKILL.md` with `name`/`description` frontmatter, following the same progressive-disclosure pattern Claude Skills use elsewhere: the chat assistant's system prompt lists every discovered skill's name and description, and it loads the full `SKILL.md` via `vault_read` only when a skill is actually relevant.
+
+Manage skills from **Settings → VaultForge → Claude Skills**: the list shows every discovered skill with buttons to open or delete it, and "Neuen Skill anlegen" scaffolds a new `Skills/<name>/SKILL.md`. The same discovery is exposed to external MCP clients via the `skills_list` tool.
 
 ## Development
 
@@ -175,10 +198,18 @@ vaultforge-obsidian/
 ├─ esbuild.config.mjs      # bundles src/main.ts → main.js
 ├─ version-bump.mjs        # keeps manifest.json/versions.json in sync on release
 ├─ copy-to-vault.mjs        # deploys build output into the local test vault
+├─ styles.css               # chat UI styling (copied into the vault by `npm run sync`)
 ├─ src/
-│  ├─ main.ts              # plugin entry point, settings tab, server lifecycle
-│  └─ mcp/
-│     └─ server.ts          # MCP server: HTTP transport, auth, tool definitions
+│  ├─ main.ts              # plugin entry point, settings tab, server/chat lifecycle
+│  ├─ tools.ts              # shared vault_read/vault_patch/search_query handlers (used by MCP server + chat)
+│  ├─ skills.ts             # Claude Skills discovery (SKILL.md frontmatter) + scaffold creation
+│  ├─ mcp/
+│  │  └─ server.ts          # MCP server: HTTP transport, auth, tool definitions
+│  ├─ claude/
+│  │  ├─ client.ts          # Anthropic Messages API client (via Obsidian's requestUrl)
+│  │  └─ tools.ts            # tool schemas for the chat assistant + the tool-use loop
+│  └─ chat/
+│     └─ ChatView.ts         # sidebar chat ItemView
 └─ vaultforge/              # bundled test vault
    └─ .obsidian/             # personal/session config (workspace.json etc.) gitignored
       └─ plugins/vaultforge/ # build output (manifest.json/main.js) - tracked; data.json (no secrets) tracked too
@@ -190,6 +221,6 @@ vaultforge-obsidian/
 
 - [x] Plugin scaffold (esbuild, TypeScript, manifest)
 - [x] Local MCP server with `vault_read` / `vault_patch` / `search_query`
-- [ ] Chat / coding assistance UI inside Obsidian
+- [x] Chat / coding assistance UI inside Obsidian
 - [ ] Template generation for notes
-- [ ] Claude Skills discovery and management from within the vault
+- [x] Claude Skills discovery and management from within the vault

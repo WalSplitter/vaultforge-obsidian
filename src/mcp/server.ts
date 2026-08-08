@@ -1,17 +1,18 @@
 import { createServer, IncomingMessage, Server as HttpServer, ServerResponse } from "http";
-import type { App, TFile } from "obsidian";
+import type { App } from "obsidian";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { MAX_SEARCH_RESULTS, patchNote, readNote, searchVault } from "../tools";
+import { listSkills } from "../skills";
 
 const MCP_PATH = "/mcp";
-const MAX_SEARCH_RESULTS = 50;
-const SNIPPET_RADIUS = 80;
 
 interface StartOptions {
 	app: App;
 	port: number;
 	apiKey: string;
+	skillsFolder: string;
 }
 
 export class VaultForgeMcpServer {
@@ -22,12 +23,12 @@ export class VaultForgeMcpServer {
 		return this.httpServer !== null;
 	}
 
-	async start({ app, port, apiKey }: StartOptions): Promise<void> {
+	async start({ app, port, apiKey, skillsFolder }: StartOptions): Promise<void> {
 		if (this.isRunning) {
 			await this.stop();
 		}
 
-		this.mcpServer = this.buildMcpServer(app);
+		this.mcpServer = this.buildMcpServer(app, skillsFolder);
 
 		this.httpServer = createServer((req, res) => {
 			void this.handleRequest(req, res, apiKey);
@@ -100,7 +101,7 @@ export class VaultForgeMcpServer {
 		}
 	}
 
-	private buildMcpServer(app: App): McpServer {
+	private buildMcpServer(app: App, skillsFolder: string): McpServer {
 		const server = new McpServer({ name: "vaultforge", version: "0.0.1" });
 
 		server.registerTool(
@@ -113,12 +114,12 @@ export class VaultForgeMcpServer {
 				},
 			},
 			async ({ path }) => {
-				const file = app.vault.getAbstractFileByPath(path);
-				if (!file || !("extension" in file)) {
-					return { content: [{ type: "text", text: `Datei nicht gefunden: ${path}` }], isError: true };
+				try {
+					const content = await readNote(app, path);
+					return { content: [{ type: "text", text: content }] };
+				} catch (err) {
+					return { content: [{ type: "text", text: (err as Error).message }], isError: true };
 				}
-				const content = await app.vault.cachedRead(file as TFile);
-				return { content: [{ type: "text", text: content }] };
 			}
 		);
 
@@ -136,30 +137,12 @@ export class VaultForgeMcpServer {
 				},
 			},
 			async ({ path, content, mode }) => {
-				const existing = app.vault.getAbstractFileByPath(path);
-				const existingFile = existing && "extension" in existing ? (existing as TFile) : null;
-
-				if (mode === "create") {
-					if (existingFile) {
-						return { content: [{ type: "text", text: `Datei existiert bereits: ${path}` }], isError: true };
-					}
-					await app.vault.create(path, content);
-					return { content: [{ type: "text", text: `Erstellt: ${path}` }] };
+				try {
+					const status = await patchNote(app, path, content, mode);
+					return { content: [{ type: "text", text: status }] };
+				} catch (err) {
+					return { content: [{ type: "text", text: (err as Error).message }], isError: true };
 				}
-
-				if (!existingFile) {
-					await app.vault.create(path, content);
-					return { content: [{ type: "text", text: `Erstellt: ${path}` }] };
-				}
-
-				if (mode === "overwrite") {
-					await app.vault.modify(existingFile, content);
-				} else {
-					const current = await app.vault.read(existingFile);
-					const next = mode === "append" ? current + content : content + current;
-					await app.vault.modify(existingFile, next);
-				}
-				return { content: [{ type: "text", text: `Aktualisiert (${mode}): ${path}` }] };
 			}
 		);
 
@@ -174,24 +157,32 @@ export class VaultForgeMcpServer {
 				},
 			},
 			async ({ query, limit }) => {
-				const needle = query.toLowerCase();
-				const results: { path: string; snippet: string }[] = [];
-
-				for (const file of app.vault.getMarkdownFiles()) {
-					if (results.length >= limit) break;
-					const text = await app.vault.cachedRead(file);
-					const idx = text.toLowerCase().indexOf(needle);
-					if (idx === -1) continue;
-					const start = Math.max(0, idx - SNIPPET_RADIUS);
-					const end = Math.min(text.length, idx + needle.length + SNIPPET_RADIUS);
-					results.push({ path: file.path, snippet: text.slice(start, end).trim() });
-				}
+				const results = await searchVault(app, query, limit);
 
 				if (results.length === 0) {
 					return { content: [{ type: "text", text: `Keine Treffer für '${query}'` }] };
 				}
 
 				const text = results.map((r) => `## ${r.path}\n${r.snippet}`).join("\n\n");
+				return { content: [{ type: "text", text }] };
+			}
+		);
+
+		server.registerTool(
+			"skills_list",
+			{
+				title: "Claude Skills auflisten",
+				description:
+					`Listet alle im Vault-Ordner '${skillsFolder}' gefundenen Claude Skills (Unterordner mit SKILL.md) ` +
+					"mit Name und Beschreibung auf. Volle Anleitung eines Skills danach per vault_read auf dessen Pfad laden.",
+				inputSchema: {},
+			},
+			async () => {
+				const skills = await listSkills(app, skillsFolder);
+				if (skills.length === 0) {
+					return { content: [{ type: "text", text: `Keine Skills in '${skillsFolder}' gefunden.` }] };
+				}
+				const text = skills.map((s) => `## ${s.name}\n${s.description}\nPfad: ${s.path}`).join("\n\n");
 				return { content: [{ type: "text", text }] };
 			}
 		);

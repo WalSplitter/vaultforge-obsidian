@@ -1,0 +1,88 @@
+.vaultforge-api-key {
+	width: 100%;
+	font-family: var(--font-monospace);
+}
+
+.vaultforge-chat-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+}
+
+.vaultforge-chat-empty {
+	padding: var(--size-4-4);
+	color: var(--text-muted);
+}
+
+.vaultforge-chat-messages {
+	flex: 1 1 auto;
+	overflow-y: auto;
+	padding: var(--size-4-2);
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-2);
+}
+
+.vaultforge-chat-bubble {
+	max-width: 92%;
+	padding: var(--size-4-2) var(--size-4-3);
+	border-radius: var(--radius-m);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.vaultforge-chat-bubble p {
+	margin: 0;
+}
+
+.vaultforge-chat-user {
+	align-self: flex-end;
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.vaultforge-chat-assistant {
+	align-self: flex-start;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+}
+
+.vaultforge-chat-tool-call {
+	align-self: flex-start;
+	font-family: var(--font-monospace);
+	font-size: var(--font-smallest);
+	color: var(--text-muted);
+	background: var(--background-secondary-alt);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-1) var(--size-4-2);
+}
+
+.vaultforge-chat-error {
+	align-self: stretch;
+	color: var(--text-error);
+	font-size: var(--font-smaller);
+	padding: var(--size-4-1) var(--size-4-2);
+}
+
+.vaultforge-chat-input-row {
+	flex: 0 0 auto;
+	display: flex;
+	gap: var(--size-4-2);
+	padding: var(--size-4-2);
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.vaultforge-chat-input {
+	flex: 1 1 auto;
+	resize: none;
+	min-height: 2.5em;
+	max-height: 8em;
+}
+
+.vaultforge-chat-send {
+	flex: 0 0 auto;
+}
+
+.vaultforge-skills-list {
+	margin-top: var(--size-4-2);
+}

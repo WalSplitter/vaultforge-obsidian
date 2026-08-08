@@ -1,20 +1,27 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf } from "obsidian";
 import { randomBytes } from "crypto";
 import { VaultForgeMcpServer } from "./mcp/server";
+import { createSkillScaffold, listSkills } from "./skills";
+import { VIEW_TYPE_CHAT, VaultForgeChatView } from "./chat/ChatView";
 
 interface VaultForgeSettings {
 	mcpServerEnabled: boolean;
 	mcpServerPort: number;
+	chatModel: string;
+	skillsFolder: string;
 }
 
 const DEFAULT_SETTINGS: VaultForgeSettings = {
 	mcpServerEnabled: false,
 	mcpServerPort: 27124,
+	chatModel: "claude-sonnet-5",
+	skillsFolder: "Skills",
 };
 
 // Device-local storage (app.loadLocalStorage), NOT part of the vault's files:
 // survives outside data.json so it never travels with a synced/shared vault.
 const API_KEY_STORAGE_KEY = "vaultforge-mcp-api-key";
+const ANTHROPIC_KEY_STORAGE_KEY = "vaultforge-anthropic-api-key";
 
 export default class VaultForgePlugin extends Plugin {
 	settings!: VaultForgeSettings;
@@ -24,6 +31,14 @@ export default class VaultForgePlugin extends Plugin {
 		await this.loadSettings();
 		this.addSettingTab(new VaultForgeSettingTab(this.app, this));
 
+		this.registerView(VIEW_TYPE_CHAT, (leaf) => new VaultForgeChatView(leaf, this));
+		this.addRibbonIcon("message-circle", "VaultForge Chat", () => void this.activateChatView());
+		this.addCommand({
+			id: "open-chat",
+			name: "Chat öffnen",
+			callback: () => void this.activateChatView(),
+		});
+
 		if (this.settings.mcpServerEnabled) {
 			await this.startMcpServer();
 		}
@@ -31,6 +46,16 @@ export default class VaultForgePlugin extends Plugin {
 
 	async onunload() {
 		await this.mcpServer.stop();
+	}
+
+	async activateChatView(): Promise<void> {
+		const { workspace } = this.app;
+		let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0] ?? null;
+		if (!leaf) {
+			leaf = workspace.getRightLeaf(false);
+			await leaf?.setViewState({ type: VIEW_TYPE_CHAT, active: true });
+		}
+		if (leaf) workspace.revealLeaf(leaf);
 	}
 
 	getApiKey(): string {
@@ -52,12 +77,22 @@ export default class VaultForgePlugin extends Plugin {
 		return generated;
 	}
 
+	getAnthropicApiKey(): string {
+		const existing = this.app.loadLocalStorage(ANTHROPIC_KEY_STORAGE_KEY);
+		return typeof existing === "string" ? existing : "";
+	}
+
+	setAnthropicApiKey(key: string): void {
+		this.app.saveLocalStorage(ANTHROPIC_KEY_STORAGE_KEY, key.trim().length > 0 ? key.trim() : null);
+	}
+
 	async startMcpServer(): Promise<void> {
 		try {
 			await this.mcpServer.start({
 				app: this.app,
 				port: this.settings.mcpServerPort,
 				apiKey: this.getApiKey(),
+				skillsFolder: this.settings.skillsFolder,
 			});
 			new Notice(`VaultForge MCP-Server läuft auf 127.0.0.1:${this.settings.mcpServerPort}`);
 		} catch (err) {
@@ -174,5 +209,159 @@ class VaultForgeSettingTab extends PluginSettingTab {
 					this.display();
 				})
 		);
+
+		new Setting(containerEl).setName("Chat").setHeading();
+
+		let anthropicKeyText: HTMLInputElement;
+		const anthropicKeySetting = new Setting(containerEl)
+			.setName("Anthropic-API-Key")
+			.setDesc(
+				"Wird für den eingebauten Chat/Coding-Assistenten verwendet (direkte Anfragen an die Anthropic-API). " +
+					"Geräte-lokal gespeichert, nicht in der Vault-Datei."
+			)
+			.addText((text) => {
+				anthropicKeyText = text.inputEl;
+				text.setValue(this.plugin.getAnthropicApiKey());
+				text.inputEl.type = "password";
+				text.inputEl.addClass("vaultforge-api-key");
+				text.onChange((value) => this.plugin.setAnthropicApiKey(value));
+			});
+
+		anthropicKeySetting.addExtraButton((btn) =>
+			btn
+				.setIcon("eye")
+				.setTooltip("Anzeigen/Verbergen")
+				.onClick(() => {
+					const showing = anthropicKeyText.type === "text";
+					anthropicKeyText.type = showing ? "password" : "text";
+					btn.setIcon(showing ? "eye" : "eye-off");
+				})
+		);
+
+		new Setting(containerEl)
+			.setName("Chat-Modell")
+			.setDesc("Anthropic-Modell-ID für den Chat-Assistenten.")
+			.addText((text) =>
+				text.setValue(this.plugin.settings.chatModel).onChange(async (value) => {
+					if (value.trim().length === 0) return;
+					this.plugin.settings.chatModel = value.trim();
+					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl).setName("Claude Skills").setHeading();
+
+		new Setting(containerEl)
+			.setName("Skills-Ordner")
+			.setDesc(
+				"Vault-relativer Ordner, dessen Unterordner mit einer SKILL.md als Claude Skills erkannt werden."
+			)
+			.addText((text) =>
+				text.setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
+					if (value.trim().length === 0) return;
+					this.plugin.settings.skillsFolder = value.trim();
+					await this.plugin.saveSettings();
+					this.renderSkillsList();
+				})
+			);
+
+		new Setting(containerEl)
+			.addButton((btn) =>
+				btn.setButtonText("Neuen Skill anlegen").onClick(() => {
+					new NewSkillModal(this.app, async (name) => {
+						try {
+							await createSkillScaffold(this.app, this.plugin.settings.skillsFolder, name);
+							new Notice(`VaultForge: Skill '${name}' angelegt.`);
+							await this.renderSkillsList();
+						} catch (err) {
+							new Notice(`VaultForge: ${(err as Error).message}`);
+						}
+					}).open();
+				})
+			)
+			.addButton((btn) =>
+				btn.setButtonText("Aktualisieren").onClick(() => void this.renderSkillsList())
+			);
+
+		this.skillsListEl = containerEl.createDiv({ cls: "vaultforge-skills-list" });
+		void this.renderSkillsList();
+	}
+
+	private skillsListEl!: HTMLElement;
+
+	async renderSkillsList(): Promise<void> {
+		if (!this.skillsListEl) return;
+		this.skillsListEl.empty();
+
+		const skills = await listSkills(this.app, this.plugin.settings.skillsFolder);
+		if (skills.length === 0) {
+			this.skillsListEl.createEl("p", {
+				cls: "setting-item-description",
+				text: `Keine Skills in '${this.plugin.settings.skillsFolder}' gefunden.`,
+			});
+			return;
+		}
+
+		for (const skill of skills) {
+			const row = new Setting(this.skillsListEl).setName(skill.name).setDesc(skill.description || skill.path);
+			row.addExtraButton((btn) =>
+				btn
+					.setIcon("file-text")
+					.setTooltip("Öffnen")
+					.onClick(async () => {
+						const file = this.app.vault.getAbstractFileByPath(skill.path);
+						if (file instanceof TFile) {
+							await this.app.workspace.getLeaf(false).openFile(file);
+						}
+					})
+			);
+			row.addExtraButton((btn) =>
+				btn
+					.setIcon("trash-2")
+					.setTooltip("Löschen")
+					.onClick(async () => {
+						const confirmed = window.confirm(`Skill '${skill.name}' (${skill.folder}) unwiderruflich löschen?`);
+						if (!confirmed) return;
+						const folder = this.app.vault.getAbstractFileByPath(skill.folder);
+						if (folder) await this.app.vault.delete(folder, true);
+						new Notice(`VaultForge: Skill '${skill.name}' gelöscht.`);
+						await this.renderSkillsList();
+					})
+			);
+		}
+	}
+}
+
+class NewSkillModal extends Modal {
+	private onSubmit: (name: string) => void;
+
+	constructor(app: App, onSubmit: (name: string) => void) {
+		super(app);
+		this.onSubmit = onSubmit;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.createEl("h2", { text: "Neuen Skill anlegen" });
+
+		let value = "";
+		new Setting(contentEl).setName("Name").addText((text) =>
+			text.onChange((v) => (value = v))
+		);
+
+		new Setting(contentEl).addButton((btn) =>
+			btn
+				.setButtonText("Anlegen")
+				.setCta()
+				.onClick(() => {
+					if (value.trim().length === 0) return;
+					this.onSubmit(value.trim());
+					this.close();
+				})
+		);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }
