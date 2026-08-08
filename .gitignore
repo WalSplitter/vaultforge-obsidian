@@ -141,3 +141,13 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Obsidian plugin build output
+main.js
+*.js.map
+data.json
+
+# Test-Vault (lokal, nicht Teil des Plugin-Repos)
+vaultforge/.obsidian/
+vaultforge/**/*.md
+!vaultforge/.gitkeep
