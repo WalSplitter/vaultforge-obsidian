@@ -142,12 +142,21 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
 
-# Obsidian plugin build output
-main.js
-*.js.map
+# Obsidian plugin build output (root only - the copy in
+# vaultforge/.obsidian/plugins/vaultforge/ is tracked on purpose)
+/main.js
+/*.js.map
 data.json
 
-# Test-Vault (lokal, nicht Teil des Plugin-Repos)
-vaultforge/.obsidian/
+# Test-Vault: persönliche/lokale Obsidian-Konfiguration ignorieren,
+# aber Plugin-Build-Output (.obsidian/plugins/vaultforge/) tracken.
+# data.json (Zeile oben) bleibt trotzdem ignoriert -> API-Key nie im Repo.
+vaultforge/.obsidian/workspace.json
+vaultforge/.obsidian/workspace-mobile.json
+vaultforge/.obsidian/app.json
+vaultforge/.obsidian/appearance.json
+vaultforge/.obsidian/graph.json
+vaultforge/.obsidian/core-plugins.json
+vaultforge/.obsidian/cache/
 vaultforge/**/*.md
 !vaultforge/.gitkeep
