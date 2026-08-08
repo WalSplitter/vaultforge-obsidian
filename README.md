@@ -45,7 +45,7 @@ Obsidian (Electron renderer process)
 
 **Request flow, step by step:**
 
-1. Plugin loads → reads settings from `data.json` (`mcpServerEnabled`, `mcpServerPort`, `mcpApiKey`).
+1. Plugin loads → reads settings from `data.json` (`mcpServerEnabled`, `mcpServerPort`). The API key is loaded separately via `app.loadLocalStorage()` — see [Security model](#security-model) for why it's kept out of `data.json`.
 2. If the server is enabled, `VaultForgeMcpServer.start()` registers the three tools below on an `McpServer` instance and starts a plain Node `http.Server` listening on `127.0.0.1:<port>`.
 3. For every incoming request:
    - Only `POST /mcp` is accepted — everything else gets a `404`.
@@ -67,11 +67,15 @@ Because the server lives inside the same process as Obsidian, tool handlers call
 
 ## Security model
 
-A local HTTP server with vault read/write access is a real attack surface on shared machines, so VaultForge applies the same baseline as the Local REST API plugin:
+A local HTTP server with vault read/write access is a real attack surface on shared machines, so VaultForge applies the same baseline as the Local REST API plugin, plus one deliberate deviation:
 
 - **Localhost-only binding** — the server listens on `127.0.0.1`, never `0.0.0.0`; it is not reachable from the network.
-- **Bearer-token authentication** — a random 24-byte hex API key is generated on first server start and stored in the plugin's local settings (`data.json`, never committed). Every request must include `Authorization: Bearer <key>`.
-- No key is baked into the code or shipped anywhere — each vault generates its own on first use.
+- **Bearer-token authentication** — a random 24-byte hex API key is generated on first use. Every request must include `Authorization: Bearer <key>`. No key is baked into the code or shipped anywhere — each installation generates its own.
+- **Key storage: device-local, not vault-local.** The key is stored via Obsidian's `app.saveLocalStorage()` / `loadLocalStorage()` API instead of the plugin's `data.json`. `data.json` lives inside the vault and travels with it — through Obsidian Sync, iCloud/Dropbox/OneDrive, a shared team vault, or (if someone ever slipped up) a git commit. `localStorage` values do not; they're tied to Obsidian's own app data on that specific device. So if the vault is ever synced or shared, the bearer token doesn't go along for the ride.
+  - We looked at Electron's `safeStorage` (OS-keychain-backed encryption) first, since the plugin already has Node/Electron access via `isDesktopOnly: true`. It's confirmed unavailable to Obsidian plugins (disabled in the renderer sandbox — see the [Obsidian forum thread](https://forum.obsidian.md/t/electron-safestorage-available/54844)), so `loadLocalStorage` is the practical alternative that still solves the actual risk (the key propagating via a synced/shared vault).
+- **Masked in the UI** — the settings tab shows the key as a password field by default (eye-icon toggle to reveal), so it isn't casually exposed via screenshots or screen shares.
+- **One-click rotation** — a "regenerate" button in settings issues a new key (with a confirmation prompt, since it invalidates already-configured MCP clients) and restarts the server if it's running.
+- **Legacy cleanup** — earlier builds stored the key in `data.json`. `loadSettings()` detects and strips that field automatically on load so it stops lingering in vault files from older installs.
 
 ## Installation
 
@@ -80,7 +84,7 @@ VaultForge is not yet on the Obsidian community plugin registry. Manual install:
 1. Download or build `manifest.json`, `main.js`, and `styles.css` (if present) — see [Development](#development).
 2. Copy those files into `<YourVault>/.obsidian/plugins/vaultforge/`.
 3. In Obsidian: **Settings → Community plugins** → disable "Restricted mode" if needed → enable **VaultForge**.
-4. Open the VaultForge settings tab and toggle **MCP server** on. Note the generated API key.
+4. Open the VaultForge settings tab and toggle **MCP server** on. Click the eye icon next to **API-Key** to reveal it (masked by default).
 
 ## Connecting Claude to the server
 
@@ -130,7 +134,7 @@ This compiles the plugin and copies the build output into `vaultforge/.obsidian/
 1. **Open folder as vault** → select the `vaultforge/` folder in this repo.
 2. **Settings → Community plugins** → disable restricted mode if prompted.
 3. Enable **VaultForge** in the plugin list.
-4. Open the VaultForge settings pane and toggle the **MCP server** on — a notice confirms the port, and an API key field appears.
+4. Open the VaultForge settings pane and toggle the **MCP server** on — a notice confirms the port, and a masked API key field appears. Click the eye icon to reveal it, or the refresh icon to rotate it.
 5. Verify the server responds using the `curl` command from [Connecting Claude to the server](#connecting-claude-to-the-server).
 
 **Iterating on code changes:**
@@ -165,10 +169,12 @@ vaultforge-obsidian/
 │  ├─ main.ts              # plugin entry point, settings tab, server lifecycle
 │  └─ mcp/
 │     └─ server.ts          # MCP server: HTTP transport, auth, tool definitions
-└─ vaultforge/              # bundled test vault (gitignored notes/config)
-   └─ .obsidian/
-      └─ plugins/vaultforge/ # build output lands here via `npm run sync`
+└─ vaultforge/              # bundled test vault
+   └─ .obsidian/             # personal/session config (workspace.json etc.) gitignored
+      └─ plugins/vaultforge/ # build output (manifest.json/main.js) - tracked; data.json (no secrets) tracked too
 ```
+
+> The key itself is never in any of these files — it lives in `localStorage`, outside the vault folder entirely. See [Security model](#security-model).
 
 ## Roadmap
 

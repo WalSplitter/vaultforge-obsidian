@@ -5,14 +5,16 @@ import { VaultForgeMcpServer } from "./mcp/server";
 interface VaultForgeSettings {
 	mcpServerEnabled: boolean;
 	mcpServerPort: number;
-	mcpApiKey: string;
 }
 
 const DEFAULT_SETTINGS: VaultForgeSettings = {
 	mcpServerEnabled: false,
 	mcpServerPort: 27124,
-	mcpApiKey: "",
 };
+
+// Device-local storage (app.loadLocalStorage), NOT part of the vault's files:
+// survives outside data.json so it never travels with a synced/shared vault.
+const API_KEY_STORAGE_KEY = "vaultforge-mcp-api-key";
 
 export default class VaultForgePlugin extends Plugin {
 	settings!: VaultForgeSettings;
@@ -31,16 +33,31 @@ export default class VaultForgePlugin extends Plugin {
 		await this.mcpServer.stop();
 	}
 
-	async startMcpServer(): Promise<void> {
-		if (!this.settings.mcpApiKey) {
-			this.settings.mcpApiKey = randomBytes(24).toString("hex");
-			await this.saveSettings();
+	getApiKey(): string {
+		const existing = this.app.loadLocalStorage(API_KEY_STORAGE_KEY);
+		if (typeof existing === "string" && existing.length > 0) {
+			return existing;
 		}
+		const generated = randomBytes(24).toString("hex");
+		this.app.saveLocalStorage(API_KEY_STORAGE_KEY, generated);
+		return generated;
+	}
+
+	async regenerateApiKey(): Promise<string> {
+		const generated = randomBytes(24).toString("hex");
+		this.app.saveLocalStorage(API_KEY_STORAGE_KEY, generated);
+		if (this.mcpServer.isRunning) {
+			await this.startMcpServer();
+		}
+		return generated;
+	}
+
+	async startMcpServer(): Promise<void> {
 		try {
 			await this.mcpServer.start({
 				app: this.app,
 				port: this.settings.mcpServerPort,
-				apiKey: this.settings.mcpApiKey,
+				apiKey: this.getApiKey(),
 			});
 			new Notice(`VaultForge MCP-Server läuft auf 127.0.0.1:${this.settings.mcpServerPort}`);
 		} catch (err) {
@@ -54,7 +71,16 @@ export default class VaultForgePlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		const loaded: Record<string, unknown> = (await this.loadData()) ?? {};
+		// Migration: earlier versions stored the API key in data.json (vault-synced,
+		// plaintext). Strip it on load so it stops shipping with the vault.
+		const hadLegacyKey = "mcpApiKey" in loaded;
+		delete loaded.mcpApiKey;
+
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+		if (hadLegacyKey) {
+			await this.saveSettings();
+		}
 	}
 
 	async saveSettings() {
@@ -108,15 +134,45 @@ class VaultForgeSettingTab extends PluginSettingTab {
 				})
 			);
 
-		if (this.plugin.settings.mcpApiKey) {
-			new Setting(containerEl)
-				.setName("API-Key")
-				.setDesc("Als Bearer-Token im Authorization-Header an den MCP-Server senden.")
-				.addText((text) => {
-					text.setValue(this.plugin.settings.mcpApiKey);
-					text.inputEl.readOnly = true;
-					text.inputEl.addClass("vaultforge-api-key");
-				});
-		}
+		let apiKeyText: HTMLInputElement;
+		const apiKeySetting = new Setting(containerEl)
+			.setName("API-Key")
+			.setDesc(
+				"Als Bearer-Token im Authorization-Header an den MCP-Server senden. Geräte-lokal gespeichert " +
+					"(nicht in der Vault-Datei) - reist nicht mit, falls die Vault synchronisiert oder geteilt wird."
+			)
+			.addText((text) => {
+				apiKeyText = text.inputEl;
+				text.setValue(this.plugin.getApiKey());
+				text.inputEl.readOnly = true;
+				text.inputEl.type = "password";
+				text.inputEl.addClass("vaultforge-api-key");
+			});
+
+		apiKeySetting.addExtraButton((btn) =>
+			btn
+				.setIcon("eye")
+				.setTooltip("Anzeigen/Verbergen")
+				.onClick(() => {
+					const showing = apiKeyText.type === "text";
+					apiKeyText.type = showing ? "password" : "text";
+					btn.setIcon(showing ? "eye" : "eye-off");
+				})
+		);
+
+		apiKeySetting.addExtraButton((btn) =>
+			btn
+				.setIcon("refresh-cw")
+				.setTooltip("Neu generieren")
+				.onClick(async () => {
+					const confirmed = window.confirm(
+						"API-Key neu generieren? Bereits konfigurierte MCP-Clients (Claude Code/Desktop) verlieren den Zugriff, bis der neue Key dort eingetragen ist."
+					);
+					if (!confirmed) return;
+					await this.plugin.regenerateApiKey();
+					new Notice("VaultForge: API-Key neu generiert.");
+					this.display();
+				})
+		);
 	}
 }
