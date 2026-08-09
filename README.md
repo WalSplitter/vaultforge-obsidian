@@ -11,6 +11,7 @@ VaultForge is an Obsidian community plugin that brings Claude into your vault tw
 ## Table of contents
 
 - [Why VaultForge](#why-vaultforge)
+- [Localization](#localization)
 - [Installation](#installation)
 - [Setup](#setup)
   - [MCP server settings](#mcp-server-settings)
@@ -33,6 +34,8 @@ VaultForge is an Obsidian community plugin that brings Claude into your vault tw
 
 ## Why VaultForge
 
+I didn't want another AI plugin where it's unclear where my notes actually end up once I use it. VaultForge's own server component (the MCP server) never leaves your machine — it's bound to `127.0.0.1`, with no VaultForge-run backend or proxy in between (see [Security model](#security-model)). The one feature that does send vault content off your machine, the chat sidebar, goes straight to Anthropic through the `claude` CLI login you already have — not through a separate API key or server this plugin manages. Practically, that also means chat usage rides on your existing Claude Pro/Max subscription (or whatever `ANTHROPIC_API_KEY` the CLI is already configured with), instead of adding a new, separate pay-per-token cost on top.
+
 Existing options each cover part of the problem:
 
 | Plugin | Chat/Agent | Claude Code agent | Skills support |
@@ -42,6 +45,10 @@ Existing options each cover part of the problem:
 | **VaultForge** | ✅ (Pro/Max-authenticated, no separate API key) | ✅ (via MCP) | ✅ — core focus |
 
 VaultForge's differentiator is treating **Claude Skills as first-class citizens inside the vault**, not just chat and file access.
+
+## Localization
+
+The UI (settings tab, chat sidebar, notices, and error messages) is available in **English** and **German**. The language follows whatever display language is set in Obsidian's own **Settings → General → Language**; English is used for every other language. Tool descriptions and the chat system prompt sent to the model are not localized, since they're never shown in the UI — see [src/i18n.ts](src/i18n.ts) for the string table.
 
 ## Installation
 
@@ -57,34 +64,42 @@ Once the plugin is enabled, continue with [Setup](#setup) to configure it.
 
 Everything below lives in **Settings → VaultForge** inside Obsidian. The plugin has three independent features — enable only the ones you need.
 
+<p align="center">
+  <img src="assets/screenshot-settings.png" alt="VaultForge settings tab with MCP server, chat, and Claude Skills configuration" width="600">
+</p>
+
 ### MCP server settings
 
 Needed if you want an external client (Claude Desktop, Claude Code) to read/write/search your vault over MCP.
 
-- Toggle **MCP-Server aktivieren** on. A notice confirms it's listening on `127.0.0.1:<port>`.
-- **MCP-Server-Port** — default `27124`. Change it and re-toggle the server off/on to apply.
-- **API-Key** — auto-generated on first use, shown masked; click the eye icon to reveal it. You'll need it for [connecting an external MCP client](#connecting-an-external-mcp-client). See [Security model](#security-model) for how it's stored and rotated.
+- Toggle **Enable MCP server** on. A notice confirms it's listening on `127.0.0.1:<port>`.
+- **MCP server port** — default `27124`. Change it and re-toggle the server off/on to apply.
+- **API key** — auto-generated on first use, shown masked; click the eye icon to reveal it. You'll need it for [connecting an external MCP client](#connecting-an-external-mcp-client). See [Security model](#security-model) for how it's stored and rotated.
 
 ### Chat assistant settings
 
 Needed if you want to use the in-app chat sidebar. This requires the Claude Code CLI installed and logged in on this machine *first* — see [Prerequisites](#prerequisites) for the one-time setup, then come back here:
 
-- **Pfad zur claude-CLI** — leave empty; only set this if auto-detection fails (see [Troubleshooting](#troubleshooting)).
-- **Chat-Modell** — the Claude model ID the chat assistant should use.
-- **Verbindung testen** — click to confirm the CLI is found and logged in before relying on the chat.
+- **Path to claude CLI** — leave empty; only set this if auto-detection fails (see [Troubleshooting](#troubleshooting)).
+- **Chat model** — the Claude model ID the chat assistant should use.
+- **Test connection** — click to confirm the CLI is found and logged in before relying on the chat.
 
 ### Claude Skills settings
 
 Optional. Lets the chat assistant (and external MCP clients, via `skills_list`) discover Claude Skills stored in your vault.
 
-- **Skills-Ordner** — vault-relative folder whose immediate subfolders (each containing a `SKILL.md`) are treated as skills. Default `Skills`.
-- **Neuen Skill anlegen** scaffolds a new `Skills/<name>/SKILL.md`; the list below the field lets you open or delete existing skills. See [Claude Skills](#claude-skills) for how discovery works.
+- **Skills folder** — vault-relative folder whose immediate subfolders (each containing a `SKILL.md`) are treated as skills. Default `Skills`.
+- **Create new skill** scaffolds a new `Skills/<name>/SKILL.md`; the list below the field lets you open or delete existing skills. See [Claude Skills](#claude-skills) for how discovery works.
 
 ## Using VaultForge
 
 ### Chat sidebar
 
-1. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
+<p align="center">
+  <img src="assets/screenshot-chat.png" alt="VaultForge chat sidebar with the assistant's hint message and message input" width="360">
+</p>
+
+1. Click the message-circle icon in the ribbon (or run the **VaultForge: Open chat** command) to open the chat view in the right sidebar.
 2. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients — registered as an in-process MCP server via the Agent SDK (`createSdkMcpServer`) and executed directly against `app.vault`, with the CLI's own built-in tools (Bash, file access, etc.) explicitly disabled. Every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
 
 This is a v1: responses are non-streaming (a single request/response per turn) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
@@ -178,7 +193,7 @@ A one-line `OK` back means everything above worked.
 
 **6. Fully restart Obsidian** (quit it completely — not just reload the window/vault). This matters because Obsidian, like any already-running GUI app, only reads your system `PATH` once at launch; if `claude` was installed *after* Obsidian was last started, it won't be visible on `PATH` until Obsidian restarts.
 
-**7. In Obsidian: Settings → VaultForge → Chat → "Verbindung testen".** This should now report success. If it still can't find `claude`, set **"Pfad zur claude-CLI"** to the full path instead of relying on `PATH` — e.g. on Windows:
+**7. In Obsidian: Settings → VaultForge → Chat → "Test connection".** This should now report success. If it still can't find `claude`, set **"Path to claude CLI"** to the full path instead of relying on `PATH` — e.g. on Windows:
 
 ```
 C:\Users\<you>\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe
@@ -191,15 +206,15 @@ C:\Users\<you>\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\cl
 | Symptom | Fix |
 |---|---|
 | `claude`: "Not a valid Win32 application" / "Unsupported 16-bit application" | The native binary didn't download — see step 3 above. |
-| VaultForge: "claude wurde nicht gefunden" even though `claude --version` works in a terminal | Obsidian hasn't picked up the updated `PATH` — fully quit and restart it (step 6), or set the CLI path explicitly in settings (step 7). |
-| VaultForge: "Nicht bei Claude Code angemeldet" | Run `claude login` in a terminal (step 4), then retest. |
+| VaultForge: "claude CLI was not found" even though `claude --version` works in a terminal | Obsidian hasn't picked up the updated `PATH` — fully quit and restart it (step 6), or set the CLI path explicitly in settings (step 7). |
+| VaultForge: "Not logged in to Claude Code" | Run `claude login` in a terminal (step 4), then retest. |
 | Chat hangs with no response | The `claude` process likely isn't responding (network issue, or the CLI itself is stuck) — try the same prompt directly via `claude -p "..."` in a terminal to see the raw error. |
 
-**Deployment note (for contributors):** the Claude Agent SDK is bundled directly into `main.js` at build time, same as every other dependency — no extra files to copy. It deliberately does **not** ship the SDK's own optional, platform-specific ~250 MB bundled CLI binary package; the plugin always talks to the `claude` CLI you separately install and log in with (auto-detected on `PATH`, or the "Pfad zur claude-CLI" override), so there's nothing platform-specific left that bundling could break. (Runtime `import()`/`require()` of an external node_modules package was the first approach here, but Obsidian's plugin sandbox turned out to have no reliable way to do that — bare specifiers fail to resolve, and even an explicit `file://` URL fails to fetch — so bundling won this one.)
+**Deployment note (for contributors):** the Claude Agent SDK is bundled directly into `main.js` at build time, same as every other dependency — no extra files to copy. It deliberately does **not** ship the SDK's own optional, platform-specific ~250 MB bundled CLI binary package; the plugin always talks to the `claude` CLI you separately install and log in with (auto-detected on `PATH`, or the "Path to claude CLI" override), so there's nothing platform-specific left that bundling could break. (Runtime `import()`/`require()` of an external node_modules package was the first approach here, but Obsidian's plugin sandbox turned out to have no reliable way to do that — bare specifiers fail to resolve, and even an explicit `file://` URL fails to fetch — so bundling won this one.)
 
 **Open TODOs:** the Agent SDK migration surfaced several Obsidian-plugin-sandbox-specific runtime quirks (documented in `esbuild.config.mjs`, `esbuild-shims.mjs`, and the module doc comment in `src/claude/agent.ts`); the workarounds are in place and the plugin loads and reaches the CLI-spawn step cleanly, but a few things still need real end-to-end verification, not just "doesn't crash on load":
 
-- [x] A full chat turn actually succeeding (send a message, get a reply) against a properly installed, logged-in `claude` CLI — confirmed via the "Verbindung testen" button. (Needed two fixes on a real machine beyond what's in code: the native `win32-x64` binary had to be installed separately after a failed npm download — `npm install -g @anthropic-ai/claude-code-win32-x64@<version matching claude-code>`, then `node node_modules/@anthropic-ai/claude-code/install.cjs` to link it in — and Obsidian needed a full restart, or the "Pfad zur claude-CLI" override, to see `claude` on `PATH` at all, since a running GUI app doesn't pick up a PATH change until relaunched.)
+- [x] A full chat turn actually succeeding (send a message, get a reply) against a properly installed, logged-in `claude` CLI — confirmed via the "Test connection" button. (Needed two fixes on a real machine beyond what's in code: the native `win32-x64` binary had to be installed separately after a failed npm download — `npm install -g @anthropic-ai/claude-code-win32-x64@<version matching claude-code>`, then `node node_modules/@anthropic-ai/claude-code/install.cjs` to link it in — and Obsidian needed a full restart, or the "Path to claude CLI" override, to see `claude` on `PATH` at all, since a running GUI app doesn't pick up a PATH change until relaunched.)
 - [ ] A tool call actually round-tripping end-to-end through the chat UI (`vault_read` / `vault_patch` / `search_query` / `skills_list`) — the in-process MCP server wiring is untested against a live session.
 - [ ] Multi-turn session resume (`sessionId` carried across turns) confirmed to actually continue the same CLI-side conversation, not just avoid an error.
 - [ ] Cross-platform check of the `esbuild-shims.mjs` workarounds (`import.meta.url` shim, `AbortController`-via-`EventEmitter` shim) — everything so far was only observed on Windows; macOS/Linux may behave differently (or may not have needed the workarounds at all).
@@ -250,6 +265,8 @@ Because the server lives inside the same process as Obsidian, tool handlers call
 | `skills_list` | Lists Claude Skills found under the configured skills folder (name + description, parsed from each `SKILL.md`'s frontmatter). |
 
 ## Security model
+
+**Network usage.** The MCP server (above) only ever binds to `127.0.0.1` and makes no outbound calls itself — it's a passive local endpoint for MCP clients you point at it. The **chat sidebar** is the one feature that sends data off your machine: a chat turn goes to Anthropic's API through the `claude` CLI's own login (your Claude Pro/Max subscription, or the API key that CLI is configured with — see [Chat assistant](#chat-assistant)), and any `vault_read`/`vault_patch`/`search_query` tool call the assistant makes during that turn sends the matching note content along with it. No other remote service is contacted, and VaultForge itself never sees or stores an Anthropic API key.
 
 A local HTTP server with vault read/write access is a real attack surface on shared machines, so VaultForge applies the same baseline as the Local REST API plugin, plus one deliberate deviation:
 

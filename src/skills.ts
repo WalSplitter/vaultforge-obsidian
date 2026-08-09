@@ -1,4 +1,5 @@
 import type { App, TFile, TFolder } from "obsidian";
+import { t } from "./i18n";
 
 export interface SkillMeta {
 	name: string;
@@ -61,12 +62,12 @@ export async function listSkills(app: App, folderPath: string): Promise<SkillMet
 /** Creates `folderPath/skillName/SKILL.md` with a starter template. Throws if it already exists. */
 export async function createSkillScaffold(app: App, folderPath: string, skillName: string): Promise<SkillMeta> {
 	const slug = skillName.trim();
-	if (!slug) throw new Error("Skill-Name darf nicht leer sein");
+	if (!slug) throw new Error(t("errSkillNameEmpty"));
 
 	const folder = `${folderPath}/${slug}`;
 	const path = `${folder}/SKILL.md`;
 	if (app.vault.getAbstractFileByPath(path)) {
-		throw new Error(`Skill existiert bereits: ${path}`);
+		throw new Error(t("errSkillExists", { path }));
 	}
 
 	if (!app.vault.getAbstractFileByPath(folderPath)) {
@@ -74,8 +75,9 @@ export async function createSkillScaffold(app: App, folderPath: string, skillNam
 	}
 	await app.vault.createFolder(folder);
 
-	const template = `---\nname: ${slug}\ndescription: TODO - kurz beschreiben, wann dieser Skill greifen soll\n---\n\nTODO: Anleitung für diesen Skill hier ausformulieren.\n`;
+	const description = t("templateDescriptionTodo");
+	const template = `---\nname: ${slug}\ndescription: ${description}\n---\n\n${t("templateBodyTodo")}\n`;
 	await app.vault.create(path, template);
 
-	return { name: slug, description: "TODO - kurz beschreiben, wann dieser Skill greifen soll", folder, path };
+	return { name: slug, description, folder, path };
 }

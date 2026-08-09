@@ -4,6 +4,7 @@ import { VaultForgeMcpServer } from "./mcp/server";
 import { createSkillScaffold, listSkills } from "./skills";
 import { VIEW_TYPE_CHAT, VaultForgeChatView } from "./chat/ChatView";
 import { AgentCliError, runChatTurn } from "./claude/agent";
+import { t } from "./i18n";
 
 interface VaultForgeSettings {
 	mcpServerEnabled: boolean;
@@ -38,7 +39,7 @@ export default class VaultForgePlugin extends Plugin {
 		this.addRibbonIcon("message-circle", "VaultForge Chat", () => void this.activateChatView());
 		this.addCommand({
 			id: "open-chat",
-			name: "Chat öffnen",
+			name: t("commandOpenChat"),
 			callback: () => void this.activateChatView(),
 		});
 
@@ -88,9 +89,9 @@ export default class VaultForgePlugin extends Plugin {
 				apiKey: this.getApiKey(),
 				skillsFolder: this.settings.skillsFolder,
 			});
-			new Notice(`VaultForge MCP-Server läuft auf 127.0.0.1:${this.settings.mcpServerPort}`);
+			new Notice(t("noticeMcpServerRunning", { port: this.settings.mcpServerPort }));
 		} catch (err) {
-			new Notice(`VaultForge: MCP-Server konnte nicht gestartet werden: ${(err as Error).message}`);
+			new Notice(t("noticeMcpServerStartFailed", { message: (err as Error).message }));
 			throw err;
 		}
 	}
@@ -130,10 +131,8 @@ class VaultForgeSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName("MCP-Server aktivieren")
-			.setDesc(
-				"Startet einen lokalen MCP-Server (nur 127.0.0.1) für Claude Code / Claude Desktop mit Vault- und Skills-Zugriff."
-			)
+			.setName(t("settingMcpEnableName"))
+			.setDesc(t("settingMcpEnableDesc"))
 			.addToggle((toggle) =>
 				toggle.setValue(this.plugin.settings.mcpServerEnabled).onChange(async (value) => {
 					this.plugin.settings.mcpServerEnabled = value;
@@ -151,8 +150,8 @@ class VaultForgeSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("MCP-Server-Port")
-			.setDesc("Lokaler Port für den MCP-Server. Änderung erfordert Neustart des Servers.")
+			.setName(t("settingMcpPortName"))
+			.setDesc(t("settingMcpPortDesc"))
 			.addText((text) =>
 				text.setValue(String(this.plugin.settings.mcpServerPort)).onChange(async (value) => {
 					const port = Number(value);
@@ -165,11 +164,8 @@ class VaultForgeSettingTab extends PluginSettingTab {
 
 		let apiKeyText: HTMLInputElement;
 		const apiKeySetting = new Setting(containerEl)
-			.setName("API-Key")
-			.setDesc(
-				"Als Bearer-Token im Authorization-Header an den MCP-Server senden. Geräte-lokal gespeichert " +
-					"(nicht in der Vault-Datei) - reist nicht mit, falls die Vault synchronisiert oder geteilt wird."
-			)
+			.setName(t("settingApiKeyName"))
+			.setDesc(t("settingApiKeyDesc"))
 			.addText((text) => {
 				apiKeyText = text.inputEl;
 				text.setValue(this.plugin.getApiKey());
@@ -181,7 +177,7 @@ class VaultForgeSettingTab extends PluginSettingTab {
 		apiKeySetting.addExtraButton((btn) =>
 			btn
 				.setIcon("eye")
-				.setTooltip("Anzeigen/Verbergen")
+				.setTooltip(t("tooltipShowHideKey"))
 				.onClick(() => {
 					const showing = apiKeyText.type === "text";
 					apiKeyText.type = showing ? "password" : "text";
@@ -192,40 +188,28 @@ class VaultForgeSettingTab extends PluginSettingTab {
 		apiKeySetting.addExtraButton((btn) =>
 			btn
 				.setIcon("refresh-cw")
-				.setTooltip("Neu generieren")
+				.setTooltip(t("tooltipRegenerateKey"))
 				.onClick(async () => {
-					const confirmed = window.confirm(
-						"API-Key neu generieren? Bereits konfigurierte MCP-Clients (Claude Code/Desktop) verlieren den Zugriff, bis der neue Key dort eingetragen ist."
-					);
+					const confirmed = window.confirm(t("confirmRegenerateKey"));
 					if (!confirmed) return;
 					await this.plugin.regenerateApiKey();
-					new Notice("VaultForge: API-Key neu generiert.");
+					new Notice(t("noticeApiKeyRegenerated"));
 					this.display();
 				})
 		);
 
 		new Setting(containerEl).setName("Chat").setHeading();
 
-		new Setting(containerEl)
-			.setName("Anmeldung")
-			.setDesc(
-				"Der Chat läuft über das Claude Agent SDK, d.h. über eine lokal installierte Claude-Code-CLI — " +
-					"kein eigener Anthropic-API-Key in diesem Plugin. Nutzung wird über die Anmeldung dieser CLI " +
-					"abgerechnet (Claude Pro/Max-Abo oder deren eigener API-Key). Einmalig in einem Terminal " +
-					"ausführen: `claude login` (öffnet den Browser-Login)."
-			);
+		new Setting(containerEl).setName(t("settingLoginName")).setDesc(t("settingLoginDesc"));
 
 		let cliPathText: HTMLInputElement;
 		new Setting(containerEl)
-			.setName("Pfad zur claude-CLI (optional)")
-			.setDesc(
-				"Nur nötig, falls 'claude' nicht automatisch gefunden wird (z.B. weil Obsidian nicht aus einer " +
-					"Shell mit vollem PATH gestartet wurde). Leer lassen für Auto-Erkennung."
-			)
+			.setName(t("settingCliPathName"))
+			.setDesc(t("settingCliPathDesc"))
 			.addText((text) => {
 				cliPathText = text.inputEl;
 				text.setValue(this.plugin.settings.claudeCliPath);
-				text.setPlaceholder("z.B. C:\\Users\\<du>\\AppData\\Roaming\\npm\\claude.cmd");
+				text.setPlaceholder(t("cliPathPlaceholder"));
 				text.onChange(async (value) => {
 					this.plugin.settings.claudeCliPath = value.trim();
 					await this.plugin.saveSettings();
@@ -233,8 +217,8 @@ class VaultForgeSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Chat-Modell")
-			.setDesc("Claude-Modell-ID für den Chat-Assistenten.")
+			.setName(t("settingChatModelName"))
+			.setDesc(t("settingChatModelDesc"))
 			.addText((text) =>
 				text.setValue(this.plugin.settings.chatModel).onChange(async (value) => {
 					if (value.trim().length === 0) return;
@@ -244,11 +228,11 @@ class VaultForgeSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Verbindung testen")
-			.setDesc("Prüft, ob die claude-CLI gefunden und angemeldet ist (sendet eine minimale Testanfrage).")
+			.setName(t("settingTestConnectionName"))
+			.setDesc(t("settingTestConnectionDesc"))
 			.addButton((btn) =>
-				btn.setButtonText("Testen").onClick(async () => {
-					btn.setDisabled(true).setButtonText("Prüfe...");
+				btn.setButtonText(t("buttonTest")).onClick(async () => {
+					btn.setDisabled(true).setButtonText(t("buttonTesting"));
 					try {
 						await runChatTurn(
 							this.app,
@@ -257,14 +241,14 @@ class VaultForgeSettingTab extends PluginSettingTab {
 								skillsFolder: this.plugin.settings.skillsFolder,
 								cliPath: cliPathText.value.trim() || undefined,
 							},
-							"Antworte ausschließlich mit 'OK'."
+							t("testPingPrompt")
 						);
-						new Notice("VaultForge: Verbindung zur claude-CLI erfolgreich.");
+						new Notice(t("noticeConnectionSuccess"));
 					} catch (err) {
 						const message = err instanceof AgentCliError ? err.message : (err as Error).message;
 						new Notice(`VaultForge: ${message}`, 10000);
 					} finally {
-						btn.setDisabled(false).setButtonText("Testen");
+						btn.setDisabled(false).setButtonText(t("buttonTest"));
 					}
 				})
 			);
@@ -272,10 +256,8 @@ class VaultForgeSettingTab extends PluginSettingTab {
 		new Setting(containerEl).setName("Claude Skills").setHeading();
 
 		new Setting(containerEl)
-			.setName("Skills-Ordner")
-			.setDesc(
-				"Vault-relativer Ordner, dessen Unterordner mit einer SKILL.md als Claude Skills erkannt werden."
-			)
+			.setName(t("settingSkillsFolderName"))
+			.setDesc(t("settingSkillsFolderDesc"))
 			.addText((text) =>
 				text.setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
 					if (value.trim().length === 0) return;
@@ -287,11 +269,11 @@ class VaultForgeSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.addButton((btn) =>
-				btn.setButtonText("Neuen Skill anlegen").onClick(() => {
+				btn.setButtonText(t("buttonNewSkill")).onClick(() => {
 					new NewSkillModal(this.app, async (name) => {
 						try {
 							await createSkillScaffold(this.app, this.plugin.settings.skillsFolder, name);
-							new Notice(`VaultForge: Skill '${name}' angelegt.`);
+							new Notice(t("noticeSkillCreated", { name }));
 							await this.renderSkillsList();
 						} catch (err) {
 							new Notice(`VaultForge: ${(err as Error).message}`);
@@ -300,7 +282,7 @@ class VaultForgeSettingTab extends PluginSettingTab {
 				})
 			)
 			.addButton((btn) =>
-				btn.setButtonText("Aktualisieren").onClick(() => void this.renderSkillsList())
+				btn.setButtonText(t("buttonRefreshSkills")).onClick(() => void this.renderSkillsList())
 			);
 
 		this.skillsListEl = containerEl.createDiv({ cls: "vaultforge-skills-list" });
@@ -317,7 +299,7 @@ class VaultForgeSettingTab extends PluginSettingTab {
 		if (skills.length === 0) {
 			this.skillsListEl.createEl("p", {
 				cls: "setting-item-description",
-				text: `Keine Skills in '${this.plugin.settings.skillsFolder}' gefunden.`,
+				text: t("noSkillsFound", { folder: this.plugin.settings.skillsFolder }),
 			});
 			return;
 		}
@@ -327,7 +309,7 @@ class VaultForgeSettingTab extends PluginSettingTab {
 			row.addExtraButton((btn) =>
 				btn
 					.setIcon("file-text")
-					.setTooltip("Öffnen")
+					.setTooltip(t("tooltipOpenSkill"))
 					.onClick(async () => {
 						const file = this.app.vault.getAbstractFileByPath(skill.path);
 						if (file instanceof TFile) {
@@ -338,13 +320,13 @@ class VaultForgeSettingTab extends PluginSettingTab {
 			row.addExtraButton((btn) =>
 				btn
 					.setIcon("trash-2")
-					.setTooltip("Löschen")
+					.setTooltip(t("tooltipDeleteSkill"))
 					.onClick(async () => {
-						const confirmed = window.confirm(`Skill '${skill.name}' (${skill.folder}) unwiderruflich löschen?`);
+						const confirmed = window.confirm(t("confirmDeleteSkill", { name: skill.name, folder: skill.folder }));
 						if (!confirmed) return;
 						const folder = this.app.vault.getAbstractFileByPath(skill.folder);
 						if (folder) await this.app.vault.delete(folder, true);
-						new Notice(`VaultForge: Skill '${skill.name}' gelöscht.`);
+						new Notice(t("noticeSkillDeleted", { name: skill.name }));
 						await this.renderSkillsList();
 					})
 			);
@@ -362,7 +344,7 @@ class NewSkillModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
-		contentEl.createEl("h2", { text: "Neuen Skill anlegen" });
+		contentEl.createEl("h2", { text: t("buttonNewSkill") });
 
 		let value = "";
 		new Setting(contentEl).setName("Name").addText((text) =>
@@ -371,7 +353,7 @@ class NewSkillModal extends Modal {
 
 		new Setting(contentEl).addButton((btn) =>
 			btn
-				.setButtonText("Anlegen")
+				.setButtonText(t("buttonCreateSkill"))
 				.setCta()
 				.onClick(() => {
 					if (value.trim().length === 0) return;

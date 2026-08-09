@@ -1,13 +1,9 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type VaultForgePlugin from "../main";
 import { AgentCliError, runChatTurn, type ChatEvent } from "../claude/agent";
+import { t } from "../i18n";
 
 export const VIEW_TYPE_CHAT = "vaultforge-chat";
-
-const HINT_TEXT =
-	"Nutzt die lokal installierte Claude-Code-CLI (Pro/Max-Anmeldung oder deren eigener API-Key) — " +
-	"kein separater Anthropic-API-Key in diesem Plugin. Falls 'claude' nicht gefunden wird oder " +
-	"nicht angemeldet ist, siehe Einstellungen → VaultForge → Chat.";
 
 interface RenderedTurn {
 	role: "user" | "assistant";
@@ -60,7 +56,7 @@ export class VaultForgeChatView extends ItemView {
 		const inputRow = container.createDiv({ cls: "vaultforge-chat-input-row" });
 		this.inputEl = inputRow.createEl("textarea", {
 			cls: "vaultforge-chat-input",
-			attr: { placeholder: "Nachricht an VaultForge... (Enter = senden, Shift+Enter = neue Zeile)" },
+			attr: { placeholder: t("chatInputPlaceholder") },
 		});
 		this.inputEl.addEventListener("keydown", (evt) => {
 			if (evt.key === "Enter" && !evt.shiftKey) {
@@ -69,13 +65,15 @@ export class VaultForgeChatView extends ItemView {
 			}
 		});
 
-		this.sendBtn = inputRow.createEl("button", { cls: "vaultforge-chat-send", text: "Senden" });
+		this.sendBtn = inputRow.createEl("button", { cls: "vaultforge-chat-send", text: t("buttonSend") });
 		this.sendBtn.addEventListener("click", () => void this.handleSend());
 	}
 
 	private renderHistory(): void {
 		this.messagesEl.empty();
-		this.messagesEl.createDiv({ cls: "vaultforge-chat-bubble vaultforge-chat-hint" }).createEl("p", { text: HINT_TEXT });
+		this.messagesEl
+			.createDiv({ cls: "vaultforge-chat-bubble vaultforge-chat-hint" })
+			.createEl("p", { text: t("chatHintText") });
 		for (const turn of this.turns) {
 			for (const event of turn.events) {
 				this.appendEvent(turn.role, event);
@@ -120,7 +118,7 @@ export class VaultForgeChatView extends ItemView {
 		this.busy = busy;
 		this.inputEl.disabled = busy;
 		this.sendBtn.disabled = busy;
-		this.sendBtn.setText(busy ? "..." : "Senden");
+		this.sendBtn.setText(busy ? "..." : t("buttonSend"));
 	}
 
 	private async handleSend(): Promise<void> {
@@ -154,8 +152,9 @@ export class VaultForgeChatView extends ItemView {
 			this.scrollToBottom();
 		} catch (err) {
 			this.hideLoading();
-			const message = err instanceof AgentCliError ? err.message : `Fehler: ${(err as Error).message}`;
-			new Notice(`VaultForge Chat: ${message}`);
+			const message =
+				err instanceof AgentCliError ? err.message : t("chatErrorPrefix", { message: (err as Error).message });
+			new Notice(t("noticeChatError", { message }));
 			this.messagesEl.createDiv({ cls: "vaultforge-chat-error", text: message });
 			this.scrollToBottom();
 		} finally {

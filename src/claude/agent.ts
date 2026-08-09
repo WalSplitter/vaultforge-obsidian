@@ -3,6 +3,7 @@ import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk"
 import { z } from "zod";
 import { patchNote, readNote, searchVault, MAX_SEARCH_RESULTS, type PatchMode } from "../tools";
 import { listSkills } from "../skills";
+import { t } from "../i18n";
 
 /**
  * Chat backend based on the Claude Agent SDK instead of a raw Anthropic API
@@ -222,7 +223,10 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 				sessionId = message.session_id;
 				if (message.subtype !== "success") {
 					throw new AgentCliError(
-						`Claude-CLI-Fehler (${message.subtype}): ${message.errors?.join("; ") || stderr || "unbekannt"}`
+						t("errCliResultError", {
+							subtype: message.subtype,
+							errors: message.errors?.join("; ") || stderr || t("errUnknown"),
+						})
 					);
 				}
 				const replyText = message.result;
@@ -233,17 +237,13 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 		if (err instanceof AgentCliError) throw err;
 		const msg = (err as Error).message ?? String(err);
 		if (/not found|ENOENT/i.test(msg)) {
-			throw new AgentCliError(
-				"Claude-Code-CLI (`claude`) wurde nicht gefunden. Bitte installieren (npm i -g @anthropic-ai/claude-code " +
-					"oder offizielles Installationsprogramm) und in den VaultForge-Einstellungen den Pfad hinterlegen, " +
-					`falls sie nicht im PATH liegt. Details: ${msg}`
-			);
+			throw new AgentCliError(t("errCliNotFound", { message: msg }));
 		}
 		if (/not authenticated|authentication_failed|login/i.test(msg) || /login/i.test(stderr)) {
-			throw new AgentCliError("Nicht bei Claude Code angemeldet. Bitte in einem Terminal `claude login` ausführen.");
+			throw new AgentCliError(t("errNotAuthenticated"));
 		}
 		throw new AgentCliError(`${msg}${stderr ? `\n${stderr}` : ""}`);
 	}
 
-	throw new AgentCliError("Claude-CLI hat keine Antwort geliefert." + (stderr ? `\n${stderr}` : ""));
+	throw new AgentCliError(t("errNoResponse") + (stderr ? `\n${stderr}` : ""));
 }
