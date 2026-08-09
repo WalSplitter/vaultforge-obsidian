@@ -1,4 +1,6 @@
 import { App, FileSystemAdapter } from "obsidian";
+import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import { patchNote, readNote, searchVault, MAX_SEARCH_RESULTS, type PatchMode } from "../tools";
 import { listSkills } from "../skills";
 
@@ -9,9 +11,30 @@ import { listSkills } from "../skills";
  * OR whatever ANTHROPIC_API_KEY the CLI itself is configured with) — never
  * a separate API key this plugin manages.
  *
- * The SDK is ESM-only and resolves its native CLI binary via its own
- * node_modules at runtime, so it's imported dynamically here rather than
- * bundled (see esbuild.config.mjs).
+ * The SDK is bundled in with the rest of the plugin (not left external) even
+ * though it's ESM-only - esbuild handles that fine when the *output* is CJS.
+ * The reason to bundle rather than load at runtime: Obsidian's plugin
+ * sandbox turned out to have no reliable way to dynamically load an external
+ * node_modules package at runtime - bare-specifier `import()` fails
+ * ("Failed to resolve module specifier", routed through a Chromium-style
+ * loader with no node_modules awareness), Obsidian's `require()` lacks
+ * `.resolve()`, and even an explicit `file://` URL handed to `import()`
+ * fails ("Failed to fetch dynamically imported module" - file:// fetches
+ * appear to be blocked). Bundling sidesteps all of that. The only reason we
+ * originally avoided it was the SDK's own optional platform-specific CLI
+ * binary package (resolved via a runtime `require()` relative to its own
+ * node_modules) - but we never install that (~250MB) or rely on it: the
+ * plugin always points the SDK at the user's separately-installed `claude`
+ * CLI (PATH or the "Pfad zur claude-CLI" setting), so there's nothing
+ * platform-specific left that bundling could break.
+ *
+ * zod is a plain, ordinary static import here for the same reason it always
+ * was: esbuild dedupes a single top-level `import` across the whole bundle
+ * (unlike a `await import("zod")` inside a function, which - for a
+ * non-external module in a single-file build with no code-splitting - gets
+ * inlined as a *second*, separate module instance). Two zod instances in one
+ * bundle is what broke @modelcontextprotocol/sdk's z.custom() call with
+ * "X is not a constructor" earlier in this plugin's chat feature.
  */
 
 export class AgentCliError extends Error {}
@@ -29,22 +52,9 @@ export interface ChatTurnResult {
 	replyText: string;
 }
 
-async function loadSdk() {
-	try {
-		return await import("@anthropic-ai/claude-agent-sdk");
-	} catch (err) {
-		throw new AgentCliError(
-			"Claude Agent SDK konnte nicht geladen werden. Ist die Vault-Plugin-Installation vollständig " +
-				`(node_modules/@anthropic-ai neben main.js)? Ursache: ${(err as Error).message}`
-		);
-	}
-}
-
-async function buildToolServer(app: App, skillsFolder: string, sdk: Awaited<ReturnType<typeof loadSdk>>) {
-	const { tool, createSdkMcpServer } = sdk;
+function buildToolServer(app: App, skillsFolder: string) {
 	// Requires a Zod v4 raw shape; the project's bundled zod (v4) is passed as
 	// plain z.object(...) descriptors, which the SDK reads structurally.
-	const { z } = await import("zod");
 
 	const vaultRead = tool(
 		"vault_read",
@@ -86,10 +96,10 @@ async function buildToolServer(app: App, skillsFolder: string, sdk: Awaited<Retu
 			query: z.string().min(1).describe("Suchbegriff"),
 			limit: z.number().int().min(1).max(MAX_SEARCH_RESULTS).default(20),
 		},
-		async ({ query, limit }) => {
-			const results = await searchVault(app, query, limit);
+		async ({ query: searchTerm, limit }) => {
+			const results = await searchVault(app, searchTerm, limit);
 			if (results.length === 0) {
-				return { content: [{ type: "text", text: `Keine Treffer für '${query}'` }] };
+				return { content: [{ type: "text", text: `Keine Treffer für '${searchTerm}'` }] };
 			}
 			const text = results.map((r) => `## ${r.path}\n${r.snippet}`).join("\n\n");
 			return { content: [{ type: "text", text }] };
@@ -156,15 +166,14 @@ export interface RunChatTurnOptions {
  * run in-process and looped by the SDK itself — no manual tool-use loop here.
  */
 export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: string): Promise<ChatTurnResult> {
-	const sdk = await loadSdk();
-	const server = await buildToolServer(app, opts.skillsFolder, sdk);
+	const server = buildToolServer(app, opts.skillsFolder);
 	const system = await buildSystemPrompt(app, opts.skillsFolder);
 
 	const events: ChatEvent[] = [];
 	let sessionId = opts.sessionId ?? "";
 	let stderr = "";
 
-	const stream = sdk.query({
+	const stream = query({
 		prompt: userText,
 		options: {
 			model: opts.model,
@@ -176,7 +185,13 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 			settingSources: [],
 			resume: opts.sessionId || undefined,
 			cwd: vaultCwd(app),
-			pathToClaudeCodeExecutable: opts.cliPath || undefined,
+			// Default to the bare command name ("claude", resolved via PATH when
+			// spawned) rather than leaving this undefined: the SDK's own fallback
+			// for "no explicit path given" is to look for its optional bundled
+			// per-platform CLI binary package, which we deliberately don't install
+			// (see the module doc comment) — that lookup fails outright rather
+			// than falling back to PATH on its own.
+			pathToClaudeCodeExecutable: opts.cliPath || "claude",
 			stderr: (data: string) => {
 				stderr += data;
 			},

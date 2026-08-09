@@ -28,19 +28,42 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		// The Agent SDK is ESM-only and resolves a native CLI binary via its own
-		// node_modules at runtime (dynamic require based on process.platform) —
-		// bundling it breaks that resolution. Loaded via dynamic import() at
-		// runtime instead, so it (and its own dependency, @anthropic-ai/sdk) must
-		// stay external and ship as real node_modules next to main.js (see
-		// copy-to-vault.mjs).
-		"@anthropic-ai/claude-agent-sdk",
-		"@anthropic-ai/sdk",
+		// NOT external: @anthropic-ai/claude-agent-sdk / @anthropic-ai/sdk are
+		// bundled in like everything else. They're ESM-only, which esbuild
+		// handles fine when bundling to a CJS *output* - the concern was their
+		// own optional platform-specific CLI binary package, resolved via a
+		// runtime `require()` relative to their own node_modules. We never
+		// install that optional dependency (~250MB) or rely on it: the plugin
+		// always points the SDK at the user's separately-installed `claude` CLI
+		// (PATH or the "Pfad zur claude-CLI" setting), so there's nothing
+		// platform-specific left that bundling would break. Runtime dynamic
+		// `import()`/`require()` of external node_modules turned out to be
+		// unreliable inside Obsidian's plugin sandbox (bare specifiers fail
+		// resolution, and even explicit file:// URLs fail to fetch) - bundling
+		// sidesteps that entirely.
 		...builtins,
 		...builtins.map((m) => `node:${m}`),
 	],
 	format: "cjs",
+	platform: "node",
 	target: "es2020",
+	// CJS has no import.meta; esbuild otherwise substitutes `{}` for it, which
+	// breaks the Agent SDK's `createRequire(import.meta.url)` calls at load
+	// time (createRequire(undefined) throws). Redirect it to a runtime-computed,
+	// platform-correct file:// URL instead of a hardcoded one — see
+	// esbuild-shims.mjs for why a build-time string constant doesn't work
+	// (Windows/POSIX file:// URLs aren't cross-compatible).
+	// Obsidian's plugin sandbox: bare `AbortController` isn't recognized as an
+	// EventEmitter/EventTarget by Node's own internals (cross-realm mismatch;
+	// events.setMaxListeners(n, new AbortController().signal) throws inside the
+	// Agent SDK). Redirected bundle-wide to a realm-safe implementation built on
+	// the same `events.EventTarget` Node's checks validate against — see
+	// esbuild-shims.mjs.
+	inject: ["./esbuild-shims.mjs"],
+	define: {
+		"import.meta.url": "__vaultforgeModuleUrl",
+		AbortController: "__vaultforgeAbortController",
+	},
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	outfile: "main.js",

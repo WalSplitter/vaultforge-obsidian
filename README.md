@@ -88,8 +88,8 @@ A local HTTP server with vault read/write access is a real attack surface on sha
 
 VaultForge is not yet on the Obsidian community plugin registry. Manual install:
 
-1. Build the plugin — see [Development](#development). This produces `manifest.json`, `main.js`, `styles.css`, and (for the chat assistant) a `node_modules/` folder containing the Claude Agent SDK.
-2. Copy `manifest.json`, `main.js`, `styles.css`, and `node_modules/` into `<YourVault>/.obsidian/plugins/vaultforge/`. (`npm run sync` does this for the bundled test vault automatically — see [Testing](#testing).) Skipping `node_modules/` is fine if you only want the MCP server, not the chat sidebar.
+1. Build the plugin — see [Development](#development). This produces `manifest.json`, `main.js` (which includes the bundled Claude Agent SDK — see [Chat assistant](#chat-assistant)), and `styles.css`.
+2. Copy those three files into `<YourVault>/.obsidian/plugins/vaultforge/`. (`npm run sync` does this for the bundled test vault automatically — see [Testing](#testing).)
 3. In Obsidian: **Settings → Community plugins** → disable "Restricted mode" if needed → enable **VaultForge**.
 4. Open the VaultForge settings tab and toggle **MCP server** on. Click the eye icon next to **API-Key** to reveal it (masked by default). For the chat assistant, see [Chat assistant](#chat-assistant) — it needs the `claude` CLI installed and logged in separately.
 
@@ -136,7 +136,18 @@ Setup:
 
 This is a v1: responses are non-streaming (a single request/response per turn) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
 
-**Deployment note:** the Agent SDK is ESM-only and resolves its native CLI binary via its own `node_modules` at runtime, so — unlike the rest of the plugin — it can't be bundled into `main.js`. `npm run sync` copies the small parts it needs (`@anthropic-ai/claude-agent-sdk`, `@anthropic-ai/sdk` and their two small transitive deps) into the vault's plugin folder alongside `main.js`; it deliberately does **not** ship the SDK's own ~250 MB bundled CLI binary — that would duplicate the `claude` install you already need for the login step. If you copy the plugin folder somewhere else manually, bring `node_modules/` along too.
+**Deployment note:** the Claude Agent SDK is bundled directly into `main.js` at build time, same as every other dependency — no extra files to copy. It deliberately does **not** ship the SDK's own optional, platform-specific ~250 MB bundled CLI binary package; the plugin always talks to the `claude` CLI you separately install and log in with (auto-detected on `PATH`, or the "Pfad zur claude-CLI" override), so there's nothing platform-specific left that bundling could break. (Runtime `import()`/`require()` of an external node_modules package was the first approach here, but Obsidian's plugin sandbox turned out to have no reliable way to do that — bare specifiers fail to resolve, and even an explicit `file://` URL fails to fetch — so bundling won this one.)
+
+### Open TODOs
+
+The Agent SDK migration surfaced several Obsidian-plugin-sandbox-specific runtime quirks (documented in `esbuild.config.mjs`, `esbuild-shims.mjs`, and the module doc comment in `src/claude/agent.ts`); the workarounds are in place and the plugin loads and reaches the CLI-spawn step cleanly, but a few things still need real end-to-end verification, not just "doesn't crash on load":
+
+- [ ] A full chat turn actually succeeding (send a message, get a reply) against a properly installed, logged-in `claude` CLI — blocked so far by the local test environment's `claude-code` install missing its native `win32-x64` binary (npm download failed; retry with `npm install -g @anthropic-ai/claude-code-win32-x64@<version matching claude-code>`, or re-run `node node_modules/@anthropic-ai/claude-code/install.cjs` from the global npm folder).
+- [ ] A tool call actually round-tripping end-to-end through the chat UI (`vault_read` / `vault_patch` / `search_query` / `skills_list`) — the in-process MCP server wiring is untested against a live session.
+- [ ] Multi-turn session resume (`sessionId` carried across turns) confirmed to actually continue the same CLI-side conversation, not just avoid an error.
+- [ ] Cross-platform check of the `esbuild-shims.mjs` workarounds (`import.meta.url` shim, `AbortController`-via-`EventEmitter` shim) — everything so far was only observed on Windows; macOS/Linux may behave differently (or may not have needed the workarounds at all).
+- [ ] Regression-check the MCP server feature (`src/mcp/server.ts`) still behaves correctly — it's unrelated to the chat assistant but now shares the same bundle and the same bundle-wide `AbortController` substitution.
+- [ ] Decide whether to surface the CLI's auth source (`apiKeySource` on the SDK's init message — `"oauth"` for a Pro/Max login vs an API key) in the chat UI or settings, so it's visible at a glance which billing path is active.
 
 ## Claude Skills
 
@@ -152,7 +163,7 @@ Requirements: Node.js, npm.
 npm install       # install dependencies
 npm run dev        # esbuild in watch mode → builds main.js on every change
 npm run build       # type-check (tsc --noEmit) + production build (minified)
-npm run sync         # copy manifest.json + main.js + styles.css + Agent SDK node_modules into the bundled test vault
+npm run sync         # copy manifest.json + main.js + styles.css into the bundled test vault
 ```
 
 `npm run build` and `npm run sync` are separate on purpose: `build` produces the artifacts, `sync` deploys them into the local test vault described below.
@@ -203,6 +214,7 @@ vaultforge-obsidian/
 ├─ package.json
 ├─ tsconfig.json
 ├─ esbuild.config.mjs      # bundles src/main.ts → main.js
+├─ esbuild-shims.mjs        # runtime import.meta.url shim for the bundled Agent SDK (see Chat assistant)
 ├─ version-bump.mjs        # keeps manifest.json/versions.json in sync on release
 ├─ copy-to-vault.mjs        # deploys build output into the local test vault
 ├─ styles.css               # chat UI styling (copied into the vault by `npm run sync`)
@@ -218,7 +230,7 @@ vaultforge-obsidian/
 │     └─ ChatView.ts         # sidebar chat ItemView
 └─ vaultforge/              # bundled test vault
    └─ .obsidian/             # personal/session config (workspace.json etc.) gitignored
-      └─ plugins/vaultforge/ # build output (manifest.json/main.js + node_modules for the Agent SDK) - tracked; data.json (no secrets) tracked too
+      └─ plugins/vaultforge/ # build output (manifest.json/main.js/styles.css) - tracked; data.json (no secrets) tracked too
 ```
 
 > The MCP bearer token is never in any of these files — it lives in `localStorage`, outside the vault folder entirely. See [Security model](#security-model). The chat assistant stores no credentials at all in this plugin — it defers to the `claude` CLI's own login.
