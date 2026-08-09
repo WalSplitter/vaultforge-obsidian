@@ -1,7 +1,7 @@
 import { App, FileSystemAdapter } from "obsidian";
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { patchNote, readNote, searchVault, MAX_SEARCH_RESULTS, type PatchMode } from "../tools";
+import { patchNote, readNote, searchVault, MAX_SEARCH_RESULTS } from "../tools";
 import { listSkills } from "../skills";
 import { t } from "../i18n";
 
@@ -82,7 +82,7 @@ function buildToolServer(app: App, skillsFolder: string) {
 		},
 		async ({ path, content, mode }) => {
 			try {
-				const status = await patchNote(app, path, content, mode as PatchMode);
+				const status = await patchNote(app, path, content, mode);
 				return { content: [{ type: "text", text: status }] };
 			} catch (err) {
 				return { content: [{ type: "text", text: (err as Error).message }], isError: true };

@@ -48,8 +48,10 @@ export default class VaultForgePlugin extends Plugin {
 		}
 	}
 
-	async onunload() {
-		await this.mcpServer.stop();
+	onunload(): void {
+		// Plugin.onunload() must return void - Obsidian doesn't await it, so
+		// the server close is intentionally fire-and-forget here.
+		void this.mcpServer.stop();
 	}
 
 	async activateChatView(): Promise<void> {
@@ -59,11 +61,11 @@ export default class VaultForgePlugin extends Plugin {
 			leaf = workspace.getRightLeaf(false);
 			await leaf?.setViewState({ type: VIEW_TYPE_CHAT, active: true });
 		}
-		if (leaf) workspace.revealLeaf(leaf);
+		if (leaf) await workspace.revealLeaf(leaf);
 	}
 
 	getApiKey(): string {
-		const existing = this.app.loadLocalStorage(API_KEY_STORAGE_KEY);
+		const existing = this.app.loadLocalStorage(API_KEY_STORAGE_KEY) as string | null;
 		if (typeof existing === "string" && existing.length > 0) {
 			return existing;
 		}
@@ -101,7 +103,7 @@ export default class VaultForgePlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const loaded: Record<string, unknown> = (await this.loadData()) ?? {};
+		const loaded = ((await this.loadData()) ?? {}) as Record<string, unknown>;
 		// Migration: earlier versions stored the API key in data.json (vault-synced,
 		// plaintext). Strip it on load so it stops shipping with the vault.
 		const hadLegacyKey = "mcpApiKey" in loaded;
@@ -190,7 +192,7 @@ class VaultForgeSettingTab extends PluginSettingTab {
 				.setIcon("refresh-cw")
 				.setTooltip(t("tooltipRegenerateKey"))
 				.onClick(async () => {
-					const confirmed = window.confirm(t("confirmRegenerateKey"));
+					const confirmed = await confirmDialog(this.app, t("confirmRegenerateKey"));
 					if (!confirmed) return;
 					await this.plugin.regenerateApiKey();
 					new Notice(t("noticeApiKeyRegenerated"));
@@ -263,7 +265,7 @@ class VaultForgeSettingTab extends PluginSettingTab {
 					if (value.trim().length === 0) return;
 					this.plugin.settings.skillsFolder = value.trim();
 					await this.plugin.saveSettings();
-					this.renderSkillsList();
+					await this.renderSkillsList();
 				})
 			);
 
@@ -322,10 +324,13 @@ class VaultForgeSettingTab extends PluginSettingTab {
 					.setIcon("trash-2")
 					.setTooltip(t("tooltipDeleteSkill"))
 					.onClick(async () => {
-						const confirmed = window.confirm(t("confirmDeleteSkill", { name: skill.name, folder: skill.folder }));
+						const confirmed = await confirmDialog(
+							this.app,
+							t("confirmDeleteSkill", { name: skill.name, folder: skill.folder })
+						);
 						if (!confirmed) return;
 						const folder = this.app.vault.getAbstractFileByPath(skill.folder);
-						if (folder) await this.app.vault.delete(folder, true);
+						if (folder) await this.app.fileManager.trashFile(folder);
 						new Notice(t("noticeSkillDeleted", { name: skill.name }));
 						await this.renderSkillsList();
 					})
@@ -335,9 +340,9 @@ class VaultForgeSettingTab extends PluginSettingTab {
 }
 
 class NewSkillModal extends Modal {
-	private onSubmit: (name: string) => void;
+	private onSubmit: (name: string) => void | Promise<void>;
 
-	constructor(app: App, onSubmit: (name: string) => void) {
+	constructor(app: App, onSubmit: (name: string) => void | Promise<void>) {
 		super(app);
 		this.onSubmit = onSubmit;
 	}
@@ -366,4 +371,48 @@ class NewSkillModal extends Modal {
 	onClose(): void {
 		this.contentEl.empty();
 	}
+}
+
+/** Obsidian-native replacement for `window.confirm()`, which the review guidelines flag. */
+class ConfirmModal extends Modal {
+	private message: string;
+	private onChoice: (confirmed: boolean) => void;
+
+	constructor(app: App, message: string, onChoice: (confirmed: boolean) => void) {
+		super(app);
+		this.message = message;
+		this.onChoice = onChoice;
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		contentEl.createEl("p", { text: this.message });
+
+		new Setting(contentEl)
+			.addButton((btn) =>
+				btn.setButtonText(t("buttonCancel")).onClick(() => {
+					this.onChoice(false);
+					this.close();
+				})
+			)
+			.addButton((btn) =>
+				btn
+					.setButtonText(t("buttonConfirm"))
+					.setWarning()
+					.onClick(() => {
+						this.onChoice(true);
+						this.close();
+					})
+			);
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+}
+
+function confirmDialog(app: App, message: string): Promise<boolean> {
+	return new Promise((resolve) => {
+		new ConfirmModal(app, message, resolve).open();
+	});
 }

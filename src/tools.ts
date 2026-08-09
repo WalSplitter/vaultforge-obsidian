@@ -1,4 +1,4 @@
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 export const MAX_SEARCH_RESULTS = 50;
 const SNIPPET_RADIUS = 80;
@@ -13,16 +13,16 @@ export interface SearchResult {
 /** Reads a note's content by vault-relative path. Throws if the file doesn't exist. */
 export async function readNote(app: App, path: string): Promise<string> {
 	const file = app.vault.getAbstractFileByPath(path);
-	if (!file || !("extension" in file)) {
+	if (!(file instanceof TFile)) {
 		throw new Error(`Datei nicht gefunden: ${path}`);
 	}
-	return app.vault.cachedRead(file as TFile);
+	return app.vault.cachedRead(file);
 }
 
 /** Creates or edits a note per `mode`. Returns a human-readable status message. */
 export async function patchNote(app: App, path: string, content: string, mode: PatchMode): Promise<string> {
 	const existing = app.vault.getAbstractFileByPath(path);
-	const existingFile = existing && "extension" in existing ? (existing as TFile) : null;
+	const existingFile = existing instanceof TFile ? existing : null;
 
 	if (mode === "create") {
 		if (existingFile) {

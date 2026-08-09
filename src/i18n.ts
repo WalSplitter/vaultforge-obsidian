@@ -1,10 +1,9 @@
 /**
  * Minimal DE/EN string table for VaultForge's Obsidian-facing UI (settings tab,
  * modals, notices, chat view, and errors surfaced to the user). Locale is
- * detected once from Obsidian's own configured display language (the same
- * `localStorage` key Obsidian itself and other community plugins read), not
- * from the OS - so it follows whatever the user picked in Obsidian's General
- * settings rather than the system locale.
+ * detected once from Obsidian's own configured display language, so it
+ * follows whatever the user picked in Obsidian's General settings rather
+ * than the system locale.
  *
  * Out of scope on purpose: MCP tool descriptions/titles and the chat system
  * prompt (src/claude/agent.ts, src/mcp/server.ts) are consumed by the model,
@@ -12,16 +11,12 @@
  * this dictionary.
  */
 
+import { getLanguage } from "obsidian";
+
 export type Locale = "en" | "de";
 
 function detectLocale(): Locale {
-	try {
-		const stored = window.localStorage.getItem("language");
-		if (stored?.toLowerCase().startsWith("de")) return "de";
-	} catch {
-		// localStorage unavailable (e.g. outside Electron) - fall back to English.
-	}
-	return "en";
+	return getLanguage().toLowerCase().startsWith("de") ? "de" : "en";
 }
 
 export const locale: Locale = detectLocale();
@@ -44,6 +39,8 @@ const en = {
 		"(not in the vault file) - it does not travel with the vault if it's synced or shared.",
 	tooltipShowHideKey: "Show/hide",
 	tooltipRegenerateKey: "Regenerate",
+	buttonConfirm: "Confirm",
+	buttonCancel: "Cancel",
 	confirmRegenerateKey:
 		"Regenerate the API key? Already-configured MCP clients (Claude Code/Desktop) will lose access until the new key is entered there.",
 	noticeApiKeyRegenerated: "VaultForge: API key regenerated.",
@@ -124,6 +121,8 @@ const de: Record<StringKey, string> = {
 		"(nicht in der Vault-Datei) - reist nicht mit, falls die Vault synchronisiert oder geteilt wird.",
 	tooltipShowHideKey: "Anzeigen/Verbergen",
 	tooltipRegenerateKey: "Neu generieren",
+	buttonConfirm: "Bestätigen",
+	buttonCancel: "Abbrechen",
 	confirmRegenerateKey:
 		"API-Key neu generieren? Bereits konfigurierte MCP-Clients (Claude Code/Desktop) verlieren den Zugriff, bis der neue Key dort eingetragen ist.",
 	noticeApiKeyRegenerated: "VaultForge: API-Key neu generiert.",

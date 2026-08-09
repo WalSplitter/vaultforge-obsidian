@@ -1,4 +1,4 @@
-import type { App, TFile, TFolder } from "obsidian";
+import { TFile, TFolder, type App } from "obsidian";
 import { t } from "./i18n";
 
 export interface SkillMeta {
@@ -36,13 +36,13 @@ export function parseFrontmatter(content: string): Record<string, string> {
  */
 export async function listSkills(app: App, folderPath: string): Promise<SkillMeta[]> {
 	const root = app.vault.getAbstractFileByPath(folderPath);
-	if (!root || !("children" in root)) return [];
+	if (!(root instanceof TFolder)) return [];
 
 	const skills: SkillMeta[] = [];
-	for (const child of (root as TFolder).children) {
-		if (!("children" in child)) continue; // not a folder
-		const skillFile = (child as TFolder).children.find(
-			(f): f is TFile => "extension" in f && f.name === "SKILL.md"
+	for (const child of root.children) {
+		if (!(child instanceof TFolder)) continue;
+		const skillFile = child.children.find(
+			(f): f is TFile => f instanceof TFile && f.name === "SKILL.md"
 		);
 		if (!skillFile) continue;
 

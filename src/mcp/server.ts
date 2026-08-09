@@ -194,14 +194,14 @@ export class VaultForgeMcpServer {
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
 	return new Promise((resolve, reject) => {
 		const chunks: Buffer[] = [];
-		req.on("data", (chunk) => chunks.push(chunk));
+		req.on("data", (chunk: Buffer) => chunks.push(chunk));
 		req.on("end", () => {
 			const raw = Buffer.concat(chunks).toString("utf8");
 			if (!raw) return resolve(undefined);
 			try {
 				resolve(JSON.parse(raw));
 			} catch (err) {
-				reject(err);
+				reject(err instanceof Error ? err : new Error(String(err)));
 			}
 		});
 		req.on("error", reject);
