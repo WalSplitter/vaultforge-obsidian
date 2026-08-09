@@ -121,7 +121,7 @@
 	border-top: 1px solid var(--background-modifier-border);
 	/* Obsidian's global status bar sits directly below the view - without
 	   this the input row's bottom edge touches it with no breathing room. */
-	margin-bottom: var(--size-4-2);
+	margin-bottom: var(--size-4-4);
 }
 
 .vaultforge-chat-input {
