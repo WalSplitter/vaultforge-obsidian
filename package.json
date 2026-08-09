@@ -1,7 +1,7 @@
 {
 	"name": "vaultforge",
 	"version": "0.0.1",
-	"description": "Claude AI direkt im Obsidian-Vault: MCP-Server, Chat/Coding-Unterstützung, Templates, Skills-Verwaltung.",
+	"description": "Bring Claude into your Obsidian vault: a local MCP server, an AI chat assistant, and Claude Skills management.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

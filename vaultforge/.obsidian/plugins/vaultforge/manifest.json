@@ -3,7 +3,7 @@
 	"name": "VaultForge",
 	"version": "0.0.1",
 	"minAppVersion": "1.5.0",
-	"description": "Claude AI direkt im Vault: MCP-Server, Chat/Coding-Unterstützung, Templates, Skills-Verwaltung.",
+	"description": "Bring Claude into your vault: a local MCP server, an AI chat assistant, and Claude Skills management.",
 	"author": "WalSplitter",
 	"authorUrl": "https://github.com/WalSplitter",
 	"isDesktopOnly": true
