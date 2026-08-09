@@ -3,12 +3,15 @@ import { randomBytes } from "crypto";
 import { VaultForgeMcpServer } from "./mcp/server";
 import { createSkillScaffold, listSkills } from "./skills";
 import { VIEW_TYPE_CHAT, VaultForgeChatView } from "./chat/ChatView";
+import { AgentCliError, runChatTurn } from "./claude/agent";
 
 interface VaultForgeSettings {
 	mcpServerEnabled: boolean;
 	mcpServerPort: number;
 	chatModel: string;
 	skillsFolder: string;
+	/** Override for locating the `claude` CLI when it isn't on PATH (e.g. Obsidian launched outside a shell). */
+	claudeCliPath: string;
 }
 
 const DEFAULT_SETTINGS: VaultForgeSettings = {
@@ -16,12 +19,12 @@ const DEFAULT_SETTINGS: VaultForgeSettings = {
 	mcpServerPort: 27124,
 	chatModel: "claude-sonnet-5",
 	skillsFolder: "Skills",
+	claudeCliPath: "",
 };
 
 // Device-local storage (app.loadLocalStorage), NOT part of the vault's files:
 // survives outside data.json so it never travels with a synced/shared vault.
 const API_KEY_STORAGE_KEY = "vaultforge-mcp-api-key";
-const ANTHROPIC_KEY_STORAGE_KEY = "vaultforge-anthropic-api-key";
 
 export default class VaultForgePlugin extends Plugin {
 	settings!: VaultForgeSettings;
@@ -75,15 +78,6 @@ export default class VaultForgePlugin extends Plugin {
 			await this.startMcpServer();
 		}
 		return generated;
-	}
-
-	getAnthropicApiKey(): string {
-		const existing = this.app.loadLocalStorage(ANTHROPIC_KEY_STORAGE_KEY);
-		return typeof existing === "string" ? existing : "";
-	}
-
-	setAnthropicApiKey(key: string): void {
-		this.app.saveLocalStorage(ANTHROPIC_KEY_STORAGE_KEY, key.trim().length > 0 ? key.trim() : null);
 	}
 
 	async startMcpServer(): Promise<void> {
@@ -212,40 +206,66 @@ class VaultForgeSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl).setName("Chat").setHeading();
 
-		let anthropicKeyText: HTMLInputElement;
-		const anthropicKeySetting = new Setting(containerEl)
-			.setName("Anthropic-API-Key")
+		new Setting(containerEl)
+			.setName("Anmeldung")
 			.setDesc(
-				"Wird für den eingebauten Chat/Coding-Assistenten verwendet (direkte Anfragen an die Anthropic-API). " +
-					"Geräte-lokal gespeichert, nicht in der Vault-Datei."
+				"Der Chat läuft über das Claude Agent SDK, d.h. über eine lokal installierte Claude-Code-CLI — " +
+					"kein eigener Anthropic-API-Key in diesem Plugin. Nutzung wird über die Anmeldung dieser CLI " +
+					"abgerechnet (Claude Pro/Max-Abo oder deren eigener API-Key). Einmalig in einem Terminal " +
+					"ausführen: `claude login` (öffnet den Browser-Login)."
+			);
+
+		let cliPathText: HTMLInputElement;
+		new Setting(containerEl)
+			.setName("Pfad zur claude-CLI (optional)")
+			.setDesc(
+				"Nur nötig, falls 'claude' nicht automatisch gefunden wird (z.B. weil Obsidian nicht aus einer " +
+					"Shell mit vollem PATH gestartet wurde). Leer lassen für Auto-Erkennung."
 			)
 			.addText((text) => {
-				anthropicKeyText = text.inputEl;
-				text.setValue(this.plugin.getAnthropicApiKey());
-				text.inputEl.type = "password";
-				text.inputEl.addClass("vaultforge-api-key");
-				text.onChange((value) => this.plugin.setAnthropicApiKey(value));
+				cliPathText = text.inputEl;
+				text.setValue(this.plugin.settings.claudeCliPath);
+				text.setPlaceholder("z.B. C:\\Users\\<du>\\AppData\\Roaming\\npm\\claude.cmd");
+				text.onChange(async (value) => {
+					this.plugin.settings.claudeCliPath = value.trim();
+					await this.plugin.saveSettings();
+				});
 			});
-
-		anthropicKeySetting.addExtraButton((btn) =>
-			btn
-				.setIcon("eye")
-				.setTooltip("Anzeigen/Verbergen")
-				.onClick(() => {
-					const showing = anthropicKeyText.type === "text";
-					anthropicKeyText.type = showing ? "password" : "text";
-					btn.setIcon(showing ? "eye" : "eye-off");
-				})
-		);
 
 		new Setting(containerEl)
 			.setName("Chat-Modell")
-			.setDesc("Anthropic-Modell-ID für den Chat-Assistenten.")
+			.setDesc("Claude-Modell-ID für den Chat-Assistenten.")
 			.addText((text) =>
 				text.setValue(this.plugin.settings.chatModel).onChange(async (value) => {
 					if (value.trim().length === 0) return;
 					this.plugin.settings.chatModel = value.trim();
 					await this.plugin.saveSettings();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Verbindung testen")
+			.setDesc("Prüft, ob die claude-CLI gefunden und angemeldet ist (sendet eine minimale Testanfrage).")
+			.addButton((btn) =>
+				btn.setButtonText("Testen").onClick(async () => {
+					btn.setDisabled(true).setButtonText("Prüfe...");
+					try {
+						await runChatTurn(
+							this.app,
+							{
+								model: this.plugin.settings.chatModel,
+								skillsFolder: this.plugin.settings.skillsFolder,
+								cliPath: cliPathText.value.trim() || undefined,
+							},
+							"Antworte ausschließlich mit 'OK'."
+						);
+						new Notice("VaultForge: Verbindung zur claude-CLI erfolgreich.");
+					} catch (err) {
+						const message = err instanceof AgentCliError ? err.message : (err as Error).message;
+						new Notice(`VaultForge: ${message}`, 10000);
+					} finally {
+						btn.setDisabled(false).setButtonText("Testen");
+					}
 				})
 			);
 

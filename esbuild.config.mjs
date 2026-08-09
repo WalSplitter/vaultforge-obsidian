@@ -28,6 +28,14 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
+		// The Agent SDK is ESM-only and resolves a native CLI binary via its own
+		// node_modules at runtime (dynamic require based on process.platform) —
+		// bundling it breaks that resolution. Loaded via dynamic import() at
+		// runtime instead, so it (and its own dependency, @anthropic-ai/sdk) must
+		// stay external and ship as real node_modules next to main.js (see
+		// copy-to-vault.mjs).
+		"@anthropic-ai/claude-agent-sdk",
+		"@anthropic-ai/sdk",
 		...builtins,
 		...builtins.map((m) => `node:${m}`),
 	],

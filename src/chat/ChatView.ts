@@ -1,13 +1,18 @@
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type VaultForgePlugin from "../main";
-import { ClaudeApiError, type ClaudeMessage, type ContentBlock } from "../claude/client";
-import { runChatTurn } from "../claude/tools";
+import { AgentCliError, runChatTurn, type ChatEvent } from "../claude/agent";
 
 export const VIEW_TYPE_CHAT = "vaultforge-chat";
 
+interface RenderedTurn {
+	role: "user" | "assistant";
+	events: ChatEvent[];
+}
+
 export class VaultForgeChatView extends ItemView {
 	private plugin: VaultForgePlugin;
-	private history: ClaudeMessage[] = [];
+	private turns: RenderedTurn[] = [];
+	private sessionId: string | undefined;
 	private messagesEl!: HTMLElement;
 	private inputEl!: HTMLTextAreaElement;
 	private sendBtn!: HTMLButtonElement;
@@ -43,15 +48,14 @@ export class VaultForgeChatView extends ItemView {
 		container.empty();
 		container.addClass("vaultforge-chat-container");
 
-		const apiKey = this.plugin.getAnthropicApiKey();
-		if (!apiKey) {
-			container.createDiv({ cls: "vaultforge-chat-empty" }, (el) => {
-				el.createEl("p", {
-					text: "Kein Anthropic-API-Key hinterlegt. Bitte in den VaultForge-Einstellungen unter 'Chat' eintragen.",
-				});
+		container.createDiv({ cls: "vaultforge-chat-hint" }, (el) => {
+			el.createEl("p", {
+				text:
+					"Nutzt die lokal installierte Claude-Code-CLI (Pro/Max-Anmeldung oder deren eigener API-Key) — " +
+					"kein separater Anthropic-API-Key in diesem Plugin. Falls 'claude' nicht gefunden wird oder " +
+					"nicht angemeldet ist, siehe Einstellungen → VaultForge → Chat.",
 			});
-			return;
-		}
+		});
 
 		this.messagesEl = container.createDiv({ cls: "vaultforge-chat-messages" });
 		this.renderHistory();
@@ -74,22 +78,22 @@ export class VaultForgeChatView extends ItemView {
 
 	private renderHistory(): void {
 		this.messagesEl.empty();
-		for (const message of this.history) {
-			for (const block of message.content) {
-				this.appendBlock(message.role, block);
+		for (const turn of this.turns) {
+			for (const event of turn.events) {
+				this.appendEvent(turn.role, event);
 			}
 		}
 		this.scrollToBottom();
 	}
 
-	private appendBlock(role: "user" | "assistant", block: ContentBlock): void {
-		if (block.type === "text" && block.text.trim().length > 0) {
+	private appendEvent(role: "user" | "assistant", event: ChatEvent): void {
+		if (event.type === "text" && event.text && event.text.trim().length > 0) {
 			const bubble = this.messagesEl.createDiv({ cls: `vaultforge-chat-bubble vaultforge-chat-${role}` });
-			bubble.createEl("p", { text: block.text });
-		} else if (block.type === "tool_use") {
+			bubble.createEl("p", { text: event.text });
+		} else if (event.type === "tool_call") {
 			this.messagesEl.createDiv({
 				cls: "vaultforge-chat-tool-call",
-				text: `🔧 ${block.name}(${JSON.stringify(block.input)})`,
+				text: `🔧 ${event.toolName}(${JSON.stringify(event.toolInput ?? {})})`,
 			});
 		}
 	}
@@ -107,6 +111,7 @@ export class VaultForgeChatView extends ItemView {
 		if (!text) return;
 
 		this.inputEl.value = "";
+		this.turns.push({ role: "user", events: [{ type: "text", text }] });
 		this.messagesEl.createDiv({ cls: "vaultforge-chat-bubble vaultforge-chat-user" }).createEl("p", { text });
 		this.scrollToBottom();
 		this.setBusy(true);
@@ -115,17 +120,21 @@ export class VaultForgeChatView extends ItemView {
 			const result = await runChatTurn(
 				this.app,
 				{
-					apiKey: this.plugin.getAnthropicApiKey(),
 					model: this.plugin.settings.chatModel,
 					skillsFolder: this.plugin.settings.skillsFolder,
+					sessionId: this.sessionId,
+					cliPath: this.plugin.settings.claudeCliPath || undefined,
 				},
-				text,
-				this.history
+				text
 			);
-			this.history = result.messages;
-			this.renderHistory();
+			this.sessionId = result.sessionId;
+			this.turns.push({ role: "assistant", events: result.events });
+			for (const event of result.events) {
+				this.appendEvent("assistant", event);
+			}
+			this.scrollToBottom();
 		} catch (err) {
-			const message = err instanceof ClaudeApiError ? err.message : `Fehler: ${(err as Error).message}`;
+			const message = err instanceof AgentCliError ? err.message : `Fehler: ${(err as Error).message}`;
 			new Notice(`VaultForge Chat: ${message}`);
 			this.messagesEl.createDiv({ cls: "vaultforge-chat-error", text: message });
 			this.scrollToBottom();

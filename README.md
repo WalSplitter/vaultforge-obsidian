@@ -88,10 +88,10 @@ A local HTTP server with vault read/write access is a real attack surface on sha
 
 VaultForge is not yet on the Obsidian community plugin registry. Manual install:
 
-1. Download or build `manifest.json`, `main.js`, and `styles.css` (if present) — see [Development](#development).
-2. Copy those files into `<YourVault>/.obsidian/plugins/vaultforge/`.
+1. Build the plugin — see [Development](#development). This produces `manifest.json`, `main.js`, `styles.css`, and (for the chat assistant) a `node_modules/` folder containing the Claude Agent SDK.
+2. Copy `manifest.json`, `main.js`, `styles.css`, and `node_modules/` into `<YourVault>/.obsidian/plugins/vaultforge/`. (`npm run sync` does this for the bundled test vault automatically — see [Testing](#testing).) Skipping `node_modules/` is fine if you only want the MCP server, not the chat sidebar.
 3. In Obsidian: **Settings → Community plugins** → disable "Restricted mode" if needed → enable **VaultForge**.
-4. Open the VaultForge settings tab and toggle **MCP server** on. Click the eye icon next to **API-Key** to reveal it (masked by default).
+4. Open the VaultForge settings tab and toggle **MCP server** on. Click the eye icon next to **API-Key** to reveal it (masked by default). For the chat assistant, see [Chat assistant](#chat-assistant) — it needs the `claude` CLI installed and logged in separately.
 
 ## Connecting Claude to the server
 
@@ -123,13 +123,20 @@ For Claude Desktop / Claude Code, add an HTTP MCP server entry pointing at the s
 
 ## Chat assistant
 
-VaultForge also ships a chat sidebar that talks to the Anthropic API directly from inside Obsidian (separate from, and independent of, the MCP server above — this is the plugin acting as a client, not a server).
+VaultForge also ships a chat sidebar (separate from, and independent of, the MCP server above — this is the plugin acting as a client, not a server). It runs on the **[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/typescript)** rather than a raw Anthropic API key: under the hood it shells out to a locally installed, logged-in `claude` CLI (the same one Claude Code / the VS Code extension use), so usage is billed through *that* login — a Claude Pro/Max subscription, or whatever `ANTHROPIC_API_KEY` the CLI itself is configured with — never a separate pay-per-token key this plugin manages.
 
-1. Open **Settings → VaultForge → Chat** and paste an Anthropic API key (stored device-locally via `loadLocalStorage`, same as the MCP bearer token — never written to `data.json`). Optionally override the model ID.
-2. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
-3. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients, executed directly against `app.vault` — every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
+**Why not a direct API key, and why not "log in with Claude Pro" from inside the plugin?** The browser-based OAuth login that Claude Code / the VS Code extension use to unlock Pro/Max-subscription usage is Anthropic's own proprietary flow, built into the `claude` CLI — there is no public API for a third-party app to trigger that login itself. The Agent SDK is the officially supported way to reuse an *existing* CLI login from your own code, but the login step (`claude login`, opens a browser) has to happen once, outside the plugin, in a terminal.
 
-This is a v1: responses are non-streaming (a single request/response per turn, via Obsidian's `requestUrl` to avoid CORS issues) and history is in-memory only, cleared on reload.
+Setup:
+
+1. Install the Claude Code CLI (`npm install -g @anthropic-ai/claude-code` or the [official installer](https://code.claude.com/docs/en/claude-code/setup)) and run `claude login` once in a terminal — pick "Claude account" to use a Pro/Max subscription, or configure `ANTHROPIC_API_KEY` for the CLI if you'd rather pay per token.
+2. Open **Settings → VaultForge → Chat**. If Obsidian can't find `claude` on its `PATH` (common when it's launched from a dock/Start-menu icon rather than a shell — GUI apps often don't inherit a full shell `PATH`), set the **"Pfad zur claude-CLI"** override. Use **"Verbindung testen"** to confirm the CLI is found and logged in before opening the chat.
+3. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
+4. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients — registered as an in-process MCP server via the Agent SDK (`createSdkMcpServer`) and executed directly against `app.vault`, with the CLI's own built-in tools (Bash, file access, etc.) explicitly disabled. Every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
+
+This is a v1: responses are non-streaming (a single request/response per turn) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
+
+**Deployment note:** the Agent SDK is ESM-only and resolves its native CLI binary via its own `node_modules` at runtime, so — unlike the rest of the plugin — it can't be bundled into `main.js`. `npm run sync` copies the small parts it needs (`@anthropic-ai/claude-agent-sdk`, `@anthropic-ai/sdk` and their two small transitive deps) into the vault's plugin folder alongside `main.js`; it deliberately does **not** ship the SDK's own ~250 MB bundled CLI binary — that would duplicate the `claude` install you already need for the login step. If you copy the plugin folder somewhere else manually, bring `node_modules/` along too.
 
 ## Claude Skills
 
@@ -145,7 +152,7 @@ Requirements: Node.js, npm.
 npm install       # install dependencies
 npm run dev        # esbuild in watch mode → builds main.js on every change
 npm run build       # type-check (tsc --noEmit) + production build (minified)
-npm run sync         # copy manifest.json + main.js (+ styles.css) into the bundled test vault
+npm run sync         # copy manifest.json + main.js + styles.css + Agent SDK node_modules into the bundled test vault
 ```
 
 `npm run build` and `npm run sync` are separate on purpose: `build` produces the artifacts, `sync` deploys them into the local test vault described below.
@@ -206,16 +213,15 @@ vaultforge-obsidian/
 │  ├─ mcp/
 │  │  └─ server.ts          # MCP server: HTTP transport, auth, tool definitions
 │  ├─ claude/
-│  │  ├─ client.ts          # Anthropic Messages API client (via Obsidian's requestUrl)
-│  │  └─ tools.ts            # tool schemas for the chat assistant + the tool-use loop
+│  │  └─ agent.ts           # Claude Agent SDK wrapper: in-process MCP tool server + session-resume chat turns
 │  └─ chat/
 │     └─ ChatView.ts         # sidebar chat ItemView
 └─ vaultforge/              # bundled test vault
    └─ .obsidian/             # personal/session config (workspace.json etc.) gitignored
-      └─ plugins/vaultforge/ # build output (manifest.json/main.js) - tracked; data.json (no secrets) tracked too
+      └─ plugins/vaultforge/ # build output (manifest.json/main.js + node_modules for the Agent SDK) - tracked; data.json (no secrets) tracked too
 ```
 
-> The key itself is never in any of these files — it lives in `localStorage`, outside the vault folder entirely. See [Security model](#security-model).
+> The MCP bearer token is never in any of these files — it lives in `localStorage`, outside the vault folder entirely. See [Security model](#security-model). The chat assistant stores no credentials at all in this plugin — it defers to the `claude` CLI's own login.
 
 ## Roadmap
 
