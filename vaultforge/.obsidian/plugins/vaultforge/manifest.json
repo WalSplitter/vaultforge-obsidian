@@ -1,7 +1,7 @@
 {
 	"id": "vaultforge",
 	"name": "VaultForge",
-	"version": "0.0.2",
+	"version": "0.0.3",
 	"minAppVersion": "1.5.0",
 	"description": "Bring Claude into your vault: a local MCP server, an AI chat assistant, and Claude Skills management.",
 	"author": "WalSplitter",
