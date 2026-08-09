@@ -4,7 +4,7 @@
   <img src="assets/logo.png" alt="VaultForge logo" width="180">
 </p>
 
-VaultForge is an Obsidian community plugin that embeds a local [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server directly inside your vault, giving Claude Code / Claude Desktop live read, write, and search access to your notes — no separate REST API or bridge process required.
+VaultForge is an Obsidian community plugin that brings Claude into your vault two ways: a local [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server that gives Claude Code / Claude Desktop live read, write, and search access to your notes (no separate REST API or bridge process required), and an in-app chat sidebar backed by the same tools, authenticated through your existing Claude Code login instead of a separate API key.
 
 > **Status:** early development. Core MCP server, vault tools, the chat assistant, and Claude Skills management are functional; template generation is planned next.
 
@@ -17,6 +17,9 @@ VaultForge is an Obsidian community plugin that embeds a local [MCP](https://mod
 - [Installation](#installation)
 - [Connecting Claude to the server](#connecting-claude-to-the-server)
 - [Chat assistant](#chat-assistant)
+  - [Prerequisites](#prerequisites)
+  - [Using it](#using-it)
+  - [Troubleshooting](#troubleshooting)
 - [Claude Skills](#claude-skills)
 - [Development](#development)
 - [Testing](#testing)
@@ -31,7 +34,7 @@ Existing options each cover part of the problem:
 |---|---|---|---|
 | Claudian | ✅ | ❌ | ❌ |
 | Local REST API + MCP (coddingtonbear) | ➖ (via external MCP client) | ✅ | ➖ |
-| **VaultForge** | Planned | ✅ (via MCP) | Planned — core focus |
+| **VaultForge** | ✅ (Pro/Max-authenticated, no separate API key) | ✅ (via MCP) | ✅ — core focus |
 
 VaultForge's differentiator is treating **Claude Skills as first-class citizens inside the vault**, not just chat and file access.
 
@@ -127,22 +130,92 @@ VaultForge also ships a chat sidebar (separate from, and independent of, the MCP
 
 **Why not a direct API key, and why not "log in with Claude Pro" from inside the plugin?** The browser-based OAuth login that Claude Code / the VS Code extension use to unlock Pro/Max-subscription usage is Anthropic's own proprietary flow, built into the `claude` CLI — there is no public API for a third-party app to trigger that login itself. The Agent SDK is the officially supported way to reuse an *existing* CLI login from your own code, but the login step (`claude login`, opens a browser) has to happen once, outside the plugin, in a terminal.
 
-Setup:
+### Prerequisites
 
-1. Install the Claude Code CLI (`npm install -g @anthropic-ai/claude-code` or the [official installer](https://code.claude.com/docs/en/claude-code/setup)) and run `claude login` once in a terminal — pick "Claude account" to use a Pro/Max subscription, or configure `ANTHROPIC_API_KEY` for the CLI if you'd rather pay per token.
-2. Open **Settings → VaultForge → Chat**. If Obsidian can't find `claude` on its `PATH` (common when it's launched from a dock/Start-menu icon rather than a shell — GUI apps often don't inherit a full shell `PATH`), set the **"Pfad zur claude-CLI"** override. Use **"Verbindung testen"** to confirm the CLI is found and logged in before opening the chat.
-3. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
-4. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients — registered as an in-process MCP server via the Agent SDK (`createSdkMcpServer`) and executed directly against `app.vault`, with the CLI's own built-in tools (Bash, file access, etc.) explicitly disabled. Every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
+The chat assistant needs the Claude Code CLI installed and logged in **on the machine running Obsidian**, before it will work. This is a one-time setup, done in a terminal — not inside Obsidian.
 
-This is a v1: responses are non-streaming (a single request/response per turn) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
+**1. Install Node.js 22 or newer**, if you don't already have it — [nodejs.org](https://nodejs.org) (`@anthropic-ai/claude-code` requires it). Check with:
 
-**Deployment note:** the Claude Agent SDK is bundled directly into `main.js` at build time, same as every other dependency — no extra files to copy. It deliberately does **not** ship the SDK's own optional, platform-specific ~250 MB bundled CLI binary package; the plugin always talks to the `claude` CLI you separately install and log in with (auto-detected on `PATH`, or the "Pfad zur claude-CLI" override), so there's nothing platform-specific left that bundling could break. (Runtime `import()`/`require()` of an external node_modules package was the first approach here, but Obsidian's plugin sandbox turned out to have no reliable way to do that — bare specifiers fail to resolve, and even an explicit `file://` URL fails to fetch — so bundling won this one.)
+```powershell
+node --version
+```
+
+**2. Install the Claude Code CLI globally:**
+
+```powershell
+npm install -g @anthropic-ai/claude-code
+```
+
+(Or use the [official installer](https://code.claude.com/docs/en/claude-code/setup) instead of npm, if you prefer.)
+
+**3. Verify it actually installed:**
+
+```powershell
+claude --version
+```
+
+This should print something like `2.1.226 (Claude Code)`. **If instead you get an error dialog like "Not a valid Win32 application" / "Unsupported 16-bit application"** when running `claude`, the npm install downloaded the wrapper but failed to fetch the actual native binary for your platform (a flaky network connection during install is the usual cause). Fix it by installing the missing platform package explicitly and re-running the linking step:
+
+```powershell
+# Match the version to what `claude-code` itself installed - check with:
+#   npm view @anthropic-ai/claude-code version
+npm install -g @anthropic-ai/claude-code-win32-x64@<version>
+
+# Then re-run the postinstall step that links the binary in:
+node "$env:APPDATA\npm\node_modules\@anthropic-ai\claude-code\install.cjs"
+```
+
+Run `claude --version` again to confirm it's fixed. (On macOS/Linux the equivalent platform package is `@anthropic-ai/claude-code-darwin-arm64`, `-darwin-x64`, `-linux-x64`, or `-linux-arm64` — same idea, no `install.cjs`-path quoting needed.)
+
+**4. Log in:**
+
+```powershell
+claude login
+```
+
+This opens a browser. Pick **"Claude account"** to use your Claude Pro/Max subscription (this is what makes chat usage *not* bill per token) — or, if you'd rather pay per token through the API, configure `ANTHROPIC_API_KEY` for the CLI instead and skip this step.
+
+**5. Confirm you're actually logged in and can reach the model:**
+
+```powershell
+claude -p "Say OK"
+```
+
+A one-line `OK` back means everything above worked.
+
+**6. Fully restart Obsidian** (quit it completely — not just reload the window/vault). This matters because Obsidian, like any already-running GUI app, only reads your system `PATH` once at launch; if `claude` was installed *after* Obsidian was last started, it won't be visible on `PATH` until Obsidian restarts.
+
+**7. In Obsidian: Settings → VaultForge → Chat → "Verbindung testen".** This should now report success. If it still can't find `claude`, set **"Pfad zur claude-CLI"** to the full path instead of relying on `PATH` — e.g. on Windows:
+
+```
+C:\Users\<you>\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe
+```
+
+(find yours with `(Get-Command claude).Source` in PowerShell, once step 3 above works there).
+
+### Using it
+
+1. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
+2. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients — registered as an in-process MCP server via the Agent SDK (`createSdkMcpServer`) and executed directly against `app.vault`, with the CLI's own built-in tools (Bash, file access, etc.) explicitly disabled. Every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
+
+This is a v1: responses are non-streaming (a single request/response per turn, with a 2-minute timeout so a stuck request doesn't spin forever) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `claude`: "Not a valid Win32 application" / "Unsupported 16-bit application" | The native binary didn't download — see step 3 above. |
+| VaultForge: "claude wurde nicht gefunden" even though `claude --version` works in a terminal | Obsidian hasn't picked up the updated `PATH` — fully quit and restart it (step 6), or set the CLI path explicitly in settings (step 7). |
+| VaultForge: "Nicht bei Claude Code angemeldet" | Run `claude login` in a terminal (step 4), then retest. |
+| Chat hangs, then times out after ~2 minutes | The `claude` process likely isn't responding (network issue, or the CLI itself is stuck) — try the same prompt directly via `claude -p "..."` in a terminal to see the raw error. |
+
+**Deployment note (for contributors):** the Claude Agent SDK is bundled directly into `main.js` at build time, same as every other dependency — no extra files to copy. It deliberately does **not** ship the SDK's own optional, platform-specific ~250 MB bundled CLI binary package; the plugin always talks to the `claude` CLI you separately install and log in with (auto-detected on `PATH`, or the "Pfad zur claude-CLI" override), so there's nothing platform-specific left that bundling could break. (Runtime `import()`/`require()` of an external node_modules package was the first approach here, but Obsidian's plugin sandbox turned out to have no reliable way to do that — bare specifiers fail to resolve, and even an explicit `file://` URL fails to fetch — so bundling won this one.)
 
 ### Open TODOs
 
 The Agent SDK migration surfaced several Obsidian-plugin-sandbox-specific runtime quirks (documented in `esbuild.config.mjs`, `esbuild-shims.mjs`, and the module doc comment in `src/claude/agent.ts`); the workarounds are in place and the plugin loads and reaches the CLI-spawn step cleanly, but a few things still need real end-to-end verification, not just "doesn't crash on load":
 
-- [ ] A full chat turn actually succeeding (send a message, get a reply) against a properly installed, logged-in `claude` CLI — blocked so far by the local test environment's `claude-code` install missing its native `win32-x64` binary (npm download failed; retry with `npm install -g @anthropic-ai/claude-code-win32-x64@<version matching claude-code>`, or re-run `node node_modules/@anthropic-ai/claude-code/install.cjs` from the global npm folder).
+- [x] A full chat turn actually succeeding (send a message, get a reply) against a properly installed, logged-in `claude` CLI — confirmed via the "Verbindung testen" button. (Needed two fixes on a real machine beyond what's in code: the native `win32-x64` binary had to be installed separately after a failed npm download — `npm install -g @anthropic-ai/claude-code-win32-x64@<version matching claude-code>`, then `node node_modules/@anthropic-ai/claude-code/install.cjs` to link it in — and Obsidian needed a full restart, or the "Pfad zur claude-CLI" override, to see `claude` on `PATH` at all, since a running GUI app doesn't pick up a PATH change until relaunched.)
 - [ ] A tool call actually round-tripping end-to-end through the chat UI (`vault_read` / `vault_patch` / `search_query` / `skills_list`) — the in-process MCP server wiring is untested against a live session.
 - [ ] Multi-turn session resume (`sessionId` carried across turns) confirmed to actually continue the same CLI-side conversation, not just avoid an error.
 - [ ] Cross-platform check of the `esbuild-shims.mjs` workarounds (`import.meta.url` shim, `AbortController`-via-`EventEmitter` shim) — everything so far was only observed on Windows; macOS/Linux may behave differently (or may not have needed the workarounds at all).
@@ -214,7 +287,7 @@ vaultforge-obsidian/
 ├─ package.json
 ├─ tsconfig.json
 ├─ esbuild.config.mjs      # bundles src/main.ts → main.js
-├─ esbuild-shims.mjs        # runtime import.meta.url shim for the bundled Agent SDK (see Chat assistant)
+├─ esbuild-shims.mjs        # runtime shims (import.meta.url, AbortController) the bundled Agent SDK needs inside Obsidian's plugin sandbox
 ├─ version-bump.mjs        # keeps manifest.json/versions.json in sync on release
 ├─ copy-to-vault.mjs        # deploys build output into the local test vault
 ├─ styles.css               # chat UI styling (copied into the vault by `npm run sync`)

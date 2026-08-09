@@ -4,6 +4,11 @@ import { AgentCliError, runChatTurn, type ChatEvent } from "../claude/agent";
 
 export const VIEW_TYPE_CHAT = "vaultforge-chat";
 
+const HINT_TEXT =
+	"Nutzt die lokal installierte Claude-Code-CLI (Pro/Max-Anmeldung oder deren eigener API-Key) — " +
+	"kein separater Anthropic-API-Key in diesem Plugin. Falls 'claude' nicht gefunden wird oder " +
+	"nicht angemeldet ist, siehe Einstellungen → VaultForge → Chat.";
+
 interface RenderedTurn {
 	role: "user" | "assistant";
 	events: ChatEvent[];
@@ -16,6 +21,7 @@ export class VaultForgeChatView extends ItemView {
 	private messagesEl!: HTMLElement;
 	private inputEl!: HTMLTextAreaElement;
 	private sendBtn!: HTMLButtonElement;
+	private loadingEl: HTMLElement | null = null;
 	private busy = false;
 
 	constructor(leaf: WorkspaceLeaf, plugin: VaultForgePlugin) {
@@ -48,15 +54,6 @@ export class VaultForgeChatView extends ItemView {
 		container.empty();
 		container.addClass("vaultforge-chat-container");
 
-		container.createDiv({ cls: "vaultforge-chat-hint" }, (el) => {
-			el.createEl("p", {
-				text:
-					"Nutzt die lokal installierte Claude-Code-CLI (Pro/Max-Anmeldung oder deren eigener API-Key) — " +
-					"kein separater Anthropic-API-Key in diesem Plugin. Falls 'claude' nicht gefunden wird oder " +
-					"nicht angemeldet ist, siehe Einstellungen → VaultForge → Chat.",
-			});
-		});
-
 		this.messagesEl = container.createDiv({ cls: "vaultforge-chat-messages" });
 		this.renderHistory();
 
@@ -78,6 +75,7 @@ export class VaultForgeChatView extends ItemView {
 
 	private renderHistory(): void {
 		this.messagesEl.empty();
+		this.messagesEl.createDiv({ cls: "vaultforge-chat-bubble vaultforge-chat-hint" }).createEl("p", { text: HINT_TEXT });
 		for (const turn of this.turns) {
 			for (const event of turn.events) {
 				this.appendEvent(turn.role, event);
@@ -98,6 +96,19 @@ export class VaultForgeChatView extends ItemView {
 		}
 	}
 
+	private showLoading(): void {
+		this.loadingEl = this.messagesEl.createDiv({ cls: "vaultforge-chat-loading" });
+		for (let i = 0; i < 3; i++) {
+			this.loadingEl.createDiv({ cls: "vaultforge-chat-loading-dot" });
+		}
+		this.scrollToBottom();
+	}
+
+	private hideLoading(): void {
+		this.loadingEl?.remove();
+		this.loadingEl = null;
+	}
+
 	private setBusy(busy: boolean): void {
 		this.busy = busy;
 		this.inputEl.disabled = busy;
@@ -113,8 +124,8 @@ export class VaultForgeChatView extends ItemView {
 		this.inputEl.value = "";
 		this.turns.push({ role: "user", events: [{ type: "text", text }] });
 		this.messagesEl.createDiv({ cls: "vaultforge-chat-bubble vaultforge-chat-user" }).createEl("p", { text });
-		this.scrollToBottom();
 		this.setBusy(true);
+		this.showLoading();
 
 		try {
 			const result = await runChatTurn(
@@ -127,6 +138,7 @@ export class VaultForgeChatView extends ItemView {
 				},
 				text
 			);
+			this.hideLoading();
 			this.sessionId = result.sessionId;
 			this.turns.push({ role: "assistant", events: result.events });
 			for (const event of result.events) {
@@ -134,6 +146,7 @@ export class VaultForgeChatView extends ItemView {
 			}
 			this.scrollToBottom();
 		} catch (err) {
+			this.hideLoading();
 			const message = err instanceof AgentCliError ? err.message : `Fehler: ${(err as Error).message}`;
 			new Notice(`VaultForge Chat: ${message}`);
 			this.messagesEl.createDiv({ cls: "vaultforge-chat-error", text: message });

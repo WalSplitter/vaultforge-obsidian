@@ -150,6 +150,9 @@ function vaultCwd(app: App): string | undefined {
 	return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : undefined;
 }
 
+/** How long a turn may run before it's aborted as stuck (tool-heavy turns can legitimately take a while). */
+const DEFAULT_TIMEOUT_MS = 120_000;
+
 export interface RunChatTurnOptions {
 	model: string;
 	skillsFolder: string;
@@ -157,6 +160,8 @@ export interface RunChatTurnOptions {
 	sessionId?: string;
 	/** Overrides auto-detection (PATH) of the `claude` executable. */
 	cliPath?: string;
+	/** Abort the turn after this many ms with a timeout error. Default 120000. */
+	timeoutMs?: number;
 }
 
 /**
@@ -172,6 +177,14 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 	const events: ChatEvent[] = [];
 	let sessionId = opts.sessionId ?? "";
 	let stderr = "";
+
+	const abortController = new AbortController();
+	let timedOut = false;
+	const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		abortController.abort();
+	}, timeoutMs);
 
 	const stream = query({
 		prompt: userText,
@@ -192,6 +205,7 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 			// (see the module doc comment) — that lookup fails outright rather
 			// than falling back to PATH on its own.
 			pathToClaudeCodeExecutable: opts.cliPath || "claude",
+			abortController,
 			stderr: (data: string) => {
 				stderr += data;
 			},
@@ -227,6 +241,11 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 			}
 		}
 	} catch (err) {
+		if (timedOut) {
+			throw new AgentCliError(
+				`Zeitüberschreitung: Keine Antwort innerhalb von ${Math.round(timeoutMs / 1000)}s. Anfrage wurde abgebrochen.`
+			);
+		}
 		if (err instanceof AgentCliError) throw err;
 		const msg = (err as Error).message ?? String(err);
 		if (/not found|ENOENT/i.test(msg)) {
@@ -240,7 +259,14 @@ export async function runChatTurn(app: App, opts: RunChatTurnOptions, userText: 
 			throw new AgentCliError("Nicht bei Claude Code angemeldet. Bitte in einem Terminal `claude login` ausführen.");
 		}
 		throw new AgentCliError(`${msg}${stderr ? `\n${stderr}` : ""}`);
+	} finally {
+		clearTimeout(timer);
 	}
 
+	if (timedOut) {
+		throw new AgentCliError(
+			`Zeitüberschreitung: Keine Antwort innerhalb von ${Math.round(timeoutMs / 1000)}s. Anfrage wurde abgebrochen.`
+		);
+	}
 	throw new AgentCliError("Claude-CLI hat keine Antwort geliefert." + (stderr ? `\n${stderr}` : ""));
 }
