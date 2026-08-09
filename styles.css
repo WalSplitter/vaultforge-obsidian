@@ -9,34 +9,35 @@
 	height: 100%;
 }
 
-.vaultforge-chat-empty {
-	padding: var(--size-4-4);
-	color: var(--text-muted);
-}
-
 .vaultforge-chat-hint {
 	align-self: center;
-	max-width: 92%;
-	background: var(--background-modifier-border);
+	max-width: 88%;
+	background: var(--background-secondary);
 	color: var(--text-muted);
 	font-size: var(--font-smaller);
+	line-height: 1.5;
+	text-align: center;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l);
 }
 
 .vaultforge-chat-messages {
 	flex: 1 1 auto;
 	overflow-y: auto;
-	padding: var(--size-4-2);
+	padding: var(--size-4-3) var(--size-4-2);
 	display: flex;
 	flex-direction: column;
-	gap: var(--size-4-2);
+	gap: var(--size-4-3);
 }
 
 .vaultforge-chat-bubble {
-	max-width: 92%;
+	max-width: 85%;
 	padding: var(--size-4-2) var(--size-4-3);
-	border-radius: var(--radius-m);
+	border-radius: var(--radius-l);
 	white-space: pre-wrap;
 	word-break: break-word;
+	line-height: 1.5;
+	box-shadow: var(--shadow-s);
 }
 
 .vaultforge-chat-bubble p {
@@ -47,23 +48,74 @@
 	align-self: flex-end;
 	background: var(--interactive-accent);
 	color: var(--text-on-accent);
+	border-bottom-right-radius: var(--radius-s);
 }
 
 .vaultforge-chat-assistant {
 	align-self: flex-start;
-	background: var(--background-primary);
+	background: var(--background-secondary);
 	color: var(--text-normal);
-	border: 1px solid var(--background-modifier-border);
+	border-bottom-left-radius: var(--radius-s);
+}
+
+.vaultforge-chat-markdown > :first-child {
+	margin-top: 0;
+}
+
+.vaultforge-chat-markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.vaultforge-chat-markdown p {
+	margin: 0 0 var(--size-4-2) 0;
+}
+
+.vaultforge-chat-markdown ul,
+.vaultforge-chat-markdown ol {
+	margin: 0 0 var(--size-4-2) 0;
+	padding-left: var(--size-4-5);
+}
+
+.vaultforge-chat-markdown pre {
+	background: var(--code-background);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-2);
+	overflow-x: auto;
+}
+
+.vaultforge-chat-markdown code {
+	font-size: var(--font-smaller);
+}
+
+.vaultforge-chat-markdown blockquote {
+	margin: 0 0 var(--size-4-2) 0;
+	padding-left: var(--size-4-2);
+	border-left: 2px solid var(--text-faint);
+	color: var(--text-muted);
 }
 
 .vaultforge-chat-tool-call {
 	align-self: flex-start;
+	max-width: 85%;
 	font-family: var(--font-monospace);
 	font-size: var(--font-smallest);
 	color: var(--text-muted);
 	background: var(--background-secondary-alt);
-	border-radius: var(--radius-s);
+	border-radius: var(--radius-m);
 	padding: var(--size-4-1) var(--size-4-2);
+}
+
+.vaultforge-chat-tool-call-name {
+	display: block;
+}
+
+.vaultforge-chat-tool-call-input {
+	margin: var(--size-4-1) 0 0 0;
+	white-space: pre-wrap;
+	word-break: break-word;
+	color: var(--text-faint);
+	background: transparent;
+	padding: 0;
 }
 
 .vaultforge-chat-loading {
@@ -71,10 +123,11 @@
 	display: flex;
 	align-items: center;
 	gap: 4px;
-	background: var(--background-primary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: var(--radius-m);
+	background: var(--background-secondary);
+	border-radius: var(--radius-l);
+	border-bottom-left-radius: var(--radius-s);
 	padding: var(--size-4-2) var(--size-4-3);
+	box-shadow: var(--shadow-s);
 }
 
 .vaultforge-chat-loading-dot {

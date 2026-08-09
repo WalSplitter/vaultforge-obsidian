@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type VaultForgePlugin from "../main";
 import { AgentCliError, runChatTurn, type ChatEvent } from "../claude/agent";
 
@@ -87,12 +87,19 @@ export class VaultForgeChatView extends ItemView {
 	private appendEvent(role: "user" | "assistant", event: ChatEvent): void {
 		if (event.type === "text" && event.text && event.text.trim().length > 0) {
 			const bubble = this.messagesEl.createDiv({ cls: `vaultforge-chat-bubble vaultforge-chat-${role}` });
-			bubble.createEl("p", { text: event.text });
+			if (role === "assistant") {
+				const content = bubble.createDiv({ cls: "vaultforge-chat-markdown" });
+				void MarkdownRenderer.render(this.app, event.text, content, "", this);
+			} else {
+				bubble.createEl("p", { text: event.text });
+			}
 		} else if (event.type === "tool_call") {
-			this.messagesEl.createDiv({
-				cls: "vaultforge-chat-tool-call",
-				text: `🔧 ${event.toolName}(${JSON.stringify(event.toolInput ?? {})})`,
-			});
+			const toolEl = this.messagesEl.createDiv({ cls: "vaultforge-chat-tool-call" });
+			toolEl.createSpan({ cls: "vaultforge-chat-tool-call-name", text: `🔧 ${event.toolName}` });
+			const input = JSON.stringify(event.toolInput ?? {}, null, 2);
+			if (input !== "{}") {
+				toolEl.createEl("pre", { cls: "vaultforge-chat-tool-call-input", text: input });
+			}
 		}
 	}
 

@@ -11,16 +11,21 @@ VaultForge is an Obsidian community plugin that brings Claude into your vault tw
 ## Table of contents
 
 - [Why VaultForge](#why-vaultforge)
+- [Installation](#installation)
+- [Setup](#setup)
+  - [MCP server settings](#mcp-server-settings)
+  - [Chat assistant settings](#chat-assistant-settings)
+  - [Claude Skills settings](#claude-skills-settings)
+- [Using VaultForge](#using-vaultforge)
+  - [Chat sidebar](#chat-sidebar)
+  - [Connecting an external MCP client](#connecting-an-external-mcp-client)
+- [Chat assistant](#chat-assistant)
+  - [Prerequisites](#prerequisites)
+  - [Troubleshooting](#troubleshooting)
+- [Claude Skills](#claude-skills)
 - [How it works](#how-it-works)
 - [Available MCP tools](#available-mcp-tools)
 - [Security model](#security-model)
-- [Installation](#installation)
-- [Connecting Claude to the server](#connecting-claude-to-the-server)
-- [Chat assistant](#chat-assistant)
-  - [Prerequisites](#prerequisites)
-  - [Using it](#using-it)
-  - [Troubleshooting](#troubleshooting)
-- [Claude Skills](#claude-skills)
 - [Development](#development)
 - [Testing](#testing)
 - [Project structure](#project-structure)
@@ -38,55 +43,6 @@ Existing options each cover part of the problem:
 
 VaultForge's differentiator is treating **Claude Skills as first-class citizens inside the vault**, not just chat and file access.
 
-## How it works
-
-Everything runs inside the same process as Obsidian itself (the Electron renderer). The plugin is marked `isDesktopOnly: true` in `manifest.json`, which is what allows it to import Node.js core modules (`http`, `crypto`) that wouldn't otherwise be available in a browser-style plugin context.
-
-```
-Obsidian (Electron renderer process)
-└─ VaultForge plugin
-   ├─ Settings tab (toggle server, configure port, view API key)
-   └─ MCP server (src/mcp/server.ts)
-      ├─ node:http server, bound to 127.0.0.1 only
-      ├─ StreamableHTTPServerTransport (@modelcontextprotocol/sdk)
-      └─ Tools → operate directly on `app.vault` (Obsidian's Vault API)
-```
-
-**Request flow, step by step:**
-
-1. Plugin loads → reads settings from `data.json` (`mcpServerEnabled`, `mcpServerPort`). The API key is loaded separately via `app.loadLocalStorage()` — see [Security model](#security-model) for why it's kept out of `data.json`.
-2. If the server is enabled, `VaultForgeMcpServer.start()` registers the three tools below on an `McpServer` instance and starts a plain Node `http.Server` listening on `127.0.0.1:<port>`.
-3. For every incoming request:
-   - Only `POST /mcp` is accepted — everything else gets a `404`.
-   - The `Authorization: Bearer <apiKey>` header is checked — missing or wrong key gets a `401`.
-   - The JSON body is parsed manually (no Express, no body-parser dependency).
-   - A **fresh `StreamableHTTPServerTransport`** is created per request (stateless mode: `sessionIdGenerator: undefined`), which avoids request-ID collisions across concurrent calls.
-   - The MCP server connects to that transport and hands off the request; the transport bridges Node's `req`/`res` to the Web-standard Request/Response objects the MCP protocol expects (via `@hono/node-server` internally), runs the matching tool handler, and writes the JSON-RPC response back.
-4. On disconnect (`res.on("close")`) the transport is closed and cleaned up.
-
-Because the server lives inside the same process as Obsidian, tool handlers call `app.vault` directly — there's no HTTP hop to a separate REST API layer like in the Local REST API + MCP reference setup.
-
-## Available MCP tools
-
-| Tool | Description |
-|---|---|
-| `vault_read` | Reads a note's content by vault-relative path. |
-| `vault_patch` | Creates or edits a note. `mode`: `overwrite` (default), `append`, `prepend`, or `create` (fails if the file already exists). |
-| `search_query` | Case-insensitive substring search across all Markdown notes; returns matching paths with a snippet around each hit. |
-| `skills_list` | Lists Claude Skills found under the configured skills folder (name + description, parsed from each `SKILL.md`'s frontmatter). |
-
-## Security model
-
-A local HTTP server with vault read/write access is a real attack surface on shared machines, so VaultForge applies the same baseline as the Local REST API plugin, plus one deliberate deviation:
-
-- **Localhost-only binding** — the server listens on `127.0.0.1`, never `0.0.0.0`; it is not reachable from the network.
-- **Bearer-token authentication** — a random 24-byte hex API key is generated on first use. Every request must include `Authorization: Bearer <key>`. No key is baked into the code or shipped anywhere — each installation generates its own.
-- **Key storage: device-local, not vault-local.** The key is stored via Obsidian's `app.saveLocalStorage()` / `loadLocalStorage()` API instead of the plugin's `data.json`. `data.json` lives inside the vault and travels with it — through Obsidian Sync, iCloud/Dropbox/OneDrive, a shared team vault, or (if someone ever slipped up) a git commit. `localStorage` values do not; they're tied to Obsidian's own app data on that specific device. So if the vault is ever synced or shared, the bearer token doesn't go along for the ride.
-  - We looked at Electron's `safeStorage` (OS-keychain-backed encryption) first, since the plugin already has Node/Electron access via `isDesktopOnly: true`. It's confirmed unavailable to Obsidian plugins (disabled in the renderer sandbox — see the [Obsidian forum thread](https://forum.obsidian.md/t/electron-safestorage-available/54844)), so `loadLocalStorage` is the practical alternative that still solves the actual risk (the key propagating via a synced/shared vault).
-- **Masked in the UI** — the settings tab shows the key as a password field by default (eye-icon toggle to reveal), so it isn't casually exposed via screenshots or screen shares.
-- **One-click rotation** — a "regenerate" button in settings issues a new key (with a confirmation prompt, since it invalidates already-configured MCP clients) and restarts the server if it's running.
-- **Legacy cleanup** — earlier builds stored the key in `data.json`. `loadSettings()` detects and strips that field automatically on load so it stops lingering in vault files from older installs.
-
 ## Installation
 
 VaultForge is not yet on the Obsidian community plugin registry. Manual install:
@@ -94,9 +50,46 @@ VaultForge is not yet on the Obsidian community plugin registry. Manual install:
 1. Build the plugin — see [Development](#development). This produces `manifest.json`, `main.js` (which includes the bundled Claude Agent SDK — see [Chat assistant](#chat-assistant)), and `styles.css`.
 2. Copy those three files into `<YourVault>/.obsidian/plugins/vaultforge/`. (`npm run sync` does this for the bundled test vault automatically — see [Testing](#testing).)
 3. In Obsidian: **Settings → Community plugins** → disable "Restricted mode" if needed → enable **VaultForge**.
-4. Open the VaultForge settings tab and toggle **MCP server** on. Click the eye icon next to **API-Key** to reveal it (masked by default). For the chat assistant, see [Chat assistant](#chat-assistant) — it needs the `claude` CLI installed and logged in separately.
 
-## Connecting Claude to the server
+Once the plugin is enabled, continue with [Setup](#setup) to configure it.
+
+## Setup
+
+Everything below lives in **Settings → VaultForge** inside Obsidian. The plugin has three independent features — enable only the ones you need.
+
+### MCP server settings
+
+Needed if you want an external client (Claude Desktop, Claude Code) to read/write/search your vault over MCP.
+
+- Toggle **MCP-Server aktivieren** on. A notice confirms it's listening on `127.0.0.1:<port>`.
+- **MCP-Server-Port** — default `27124`. Change it and re-toggle the server off/on to apply.
+- **API-Key** — auto-generated on first use, shown masked; click the eye icon to reveal it. You'll need it for [connecting an external MCP client](#connecting-an-external-mcp-client). See [Security model](#security-model) for how it's stored and rotated.
+
+### Chat assistant settings
+
+Needed if you want to use the in-app chat sidebar. This requires the Claude Code CLI installed and logged in on this machine *first* — see [Prerequisites](#prerequisites) for the one-time setup, then come back here:
+
+- **Pfad zur claude-CLI** — leave empty; only set this if auto-detection fails (see [Troubleshooting](#troubleshooting)).
+- **Chat-Modell** — the Claude model ID the chat assistant should use.
+- **Verbindung testen** — click to confirm the CLI is found and logged in before relying on the chat.
+
+### Claude Skills settings
+
+Optional. Lets the chat assistant (and external MCP clients, via `skills_list`) discover Claude Skills stored in your vault.
+
+- **Skills-Ordner** — vault-relative folder whose immediate subfolders (each containing a `SKILL.md`) are treated as skills. Default `Skills`.
+- **Neuen Skill anlegen** scaffolds a new `Skills/<name>/SKILL.md`; the list below the field lets you open or delete existing skills. See [Claude Skills](#claude-skills) for how discovery works.
+
+## Using VaultForge
+
+### Chat sidebar
+
+1. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
+2. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients — registered as an in-process MCP server via the Agent SDK (`createSdkMcpServer`) and executed directly against `app.vault`, with the CLI's own built-in tools (Bash, file access, etc.) explicitly disabled. Every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
+
+This is a v1: responses are non-streaming (a single request/response per turn) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
+
+### Connecting an external MCP client
 
 Once the server is running (default `http://127.0.0.1:27124/mcp`), point an MCP-capable client at it with the bearer token from the settings tab.
 
@@ -126,7 +119,7 @@ For Claude Desktop / Claude Code, add an HTTP MCP server entry pointing at the s
 
 ## Chat assistant
 
-VaultForge also ships a chat sidebar (separate from, and independent of, the MCP server above — this is the plugin acting as a client, not a server). It runs on the **[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/typescript)** rather than a raw Anthropic API key: under the hood it shells out to a locally installed, logged-in `claude` CLI (the same one Claude Code / the VS Code extension use), so usage is billed through *that* login — a Claude Pro/Max subscription, or whatever `ANTHROPIC_API_KEY` the CLI itself is configured with — never a separate pay-per-token key this plugin manages.
+VaultForge's chat sidebar (separate from, and independent of, the MCP server above — this is the plugin acting as a client, not a server) runs on the **[Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/typescript)** rather than a raw Anthropic API key: under the hood it shells out to a locally installed, logged-in `claude` CLI (the same one Claude Code / the VS Code extension use), so usage is billed through *that* login — a Claude Pro/Max subscription, or whatever `ANTHROPIC_API_KEY` the CLI itself is configured with — never a separate pay-per-token key this plugin manages.
 
 **Why not a direct API key, and why not "log in with Claude Pro" from inside the plugin?** The browser-based OAuth login that Claude Code / the VS Code extension use to unlock Pro/Max-subscription usage is Anthropic's own proprietary flow, built into the `claude` CLI — there is no public API for a third-party app to trigger that login itself. The Agent SDK is the officially supported way to reuse an *existing* CLI login from your own code, but the login step (`claude login`, opens a browser) has to happen once, outside the plugin, in a terminal.
 
@@ -193,13 +186,6 @@ C:\Users\<you>\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\cl
 
 (find yours with `(Get-Command claude).Source` in PowerShell, once step 3 above works there).
 
-### Using it
-
-1. Click the message-circle icon in the ribbon (or run the **VaultForge: Chat öffnen** command) to open the chat view in the right sidebar.
-2. Ask questions or give instructions. The assistant has the same `vault_read` / `vault_patch` / `search_query` / `skills_list` tools available as external MCP clients — registered as an in-process MCP server via the Agent SDK (`createSdkMcpServer`) and executed directly against `app.vault`, with the CLI's own built-in tools (Bash, file access, etc.) explicitly disabled. Every tool call is shown inline in the transcript (`🔧 tool(args)`) for transparency.
-
-This is a v1: responses are non-streaming (a single request/response per turn, with a 2-minute timeout so a stuck request doesn't spin forever) and the CLI's own on-disk session is resumed turn-to-turn via its session ID, but the *rendered* transcript is in-memory only, cleared on reload.
-
 ### Troubleshooting
 
 | Symptom | Fix |
@@ -207,13 +193,11 @@ This is a v1: responses are non-streaming (a single request/response per turn, w
 | `claude`: "Not a valid Win32 application" / "Unsupported 16-bit application" | The native binary didn't download — see step 3 above. |
 | VaultForge: "claude wurde nicht gefunden" even though `claude --version` works in a terminal | Obsidian hasn't picked up the updated `PATH` — fully quit and restart it (step 6), or set the CLI path explicitly in settings (step 7). |
 | VaultForge: "Nicht bei Claude Code angemeldet" | Run `claude login` in a terminal (step 4), then retest. |
-| Chat hangs, then times out after ~2 minutes | The `claude` process likely isn't responding (network issue, or the CLI itself is stuck) — try the same prompt directly via `claude -p "..."` in a terminal to see the raw error. |
+| Chat hangs with no response | The `claude` process likely isn't responding (network issue, or the CLI itself is stuck) — try the same prompt directly via `claude -p "..."` in a terminal to see the raw error. |
 
 **Deployment note (for contributors):** the Claude Agent SDK is bundled directly into `main.js` at build time, same as every other dependency — no extra files to copy. It deliberately does **not** ship the SDK's own optional, platform-specific ~250 MB bundled CLI binary package; the plugin always talks to the `claude` CLI you separately install and log in with (auto-detected on `PATH`, or the "Pfad zur claude-CLI" override), so there's nothing platform-specific left that bundling could break. (Runtime `import()`/`require()` of an external node_modules package was the first approach here, but Obsidian's plugin sandbox turned out to have no reliable way to do that — bare specifiers fail to resolve, and even an explicit `file://` URL fails to fetch — so bundling won this one.)
 
-### Open TODOs
-
-The Agent SDK migration surfaced several Obsidian-plugin-sandbox-specific runtime quirks (documented in `esbuild.config.mjs`, `esbuild-shims.mjs`, and the module doc comment in `src/claude/agent.ts`); the workarounds are in place and the plugin loads and reaches the CLI-spawn step cleanly, but a few things still need real end-to-end verification, not just "doesn't crash on load":
+**Open TODOs:** the Agent SDK migration surfaced several Obsidian-plugin-sandbox-specific runtime quirks (documented in `esbuild.config.mjs`, `esbuild-shims.mjs`, and the module doc comment in `src/claude/agent.ts`); the workarounds are in place and the plugin loads and reaches the CLI-spawn step cleanly, but a few things still need real end-to-end verification, not just "doesn't crash on load":
 
 - [x] A full chat turn actually succeeding (send a message, get a reply) against a properly installed, logged-in `claude` CLI — confirmed via the "Verbindung testen" button. (Needed two fixes on a real machine beyond what's in code: the native `win32-x64` binary had to be installed separately after a failed npm download — `npm install -g @anthropic-ai/claude-code-win32-x64@<version matching claude-code>`, then `node node_modules/@anthropic-ai/claude-code/install.cjs` to link it in — and Obsidian needed a full restart, or the "Pfad zur claude-CLI" override, to see `claude` on `PATH` at all, since a running GUI app doesn't pick up a PATH change until relaunched.)
 - [ ] A tool call actually round-tripping end-to-end through the chat UI (`vault_read` / `vault_patch` / `search_query` / `skills_list`) — the in-process MCP server wiring is untested against a live session.
@@ -224,9 +208,58 @@ The Agent SDK migration surfaced several Obsidian-plugin-sandbox-specific runtim
 
 ## Claude Skills
 
-VaultForge treats a vault folder (default `Skills/`, configurable in settings) as a directory of Claude Skills — one subfolder per skill, each containing a `SKILL.md` with `name`/`description` frontmatter, following the same progressive-disclosure pattern Claude Skills use elsewhere: the chat assistant's system prompt lists every discovered skill's name and description, and it loads the full `SKILL.md` via `vault_read` only when a skill is actually relevant.
+VaultForge treats a vault folder (configured under [Claude Skills settings](#claude-skills-settings)) as a directory of Claude Skills — one subfolder per skill, each containing a `SKILL.md` with `name`/`description` frontmatter, following the same progressive-disclosure pattern Claude Skills use elsewhere: the chat assistant's system prompt lists every discovered skill's name and description, and it loads the full `SKILL.md` via `vault_read` only when a skill is actually relevant. The same discovery is exposed to external MCP clients via the `skills_list` tool.
 
-Manage skills from **Settings → VaultForge → Claude Skills**: the list shows every discovered skill with buttons to open or delete it, and "Neuen Skill anlegen" scaffolds a new `Skills/<name>/SKILL.md`. The same discovery is exposed to external MCP clients via the `skills_list` tool.
+This mirrors the *discovery* pattern of native Claude Skills, but not the full mechanism: only `name`/`description` frontmatter is parsed (no `allowed-tools` or permissions), a skill is a single `SKILL.md` (no bundled scripts/resources), and it's loaded as plain instruction text via `vault_read` rather than invoked through the CLI's own `Skill` tool (which is disabled for this chat, along with all other built-in tools).
+
+## How it works
+
+Everything runs inside the same process as Obsidian itself (the Electron renderer). The plugin is marked `isDesktopOnly: true` in `manifest.json`, which is what allows it to import Node.js core modules (`http`, `crypto`) that wouldn't otherwise be available in a browser-style plugin context.
+
+```
+Obsidian (Electron renderer process)
+└─ VaultForge plugin
+   ├─ Settings tab (toggle server, configure port, view API key)
+   └─ MCP server (src/mcp/server.ts)
+      ├─ node:http server, bound to 127.0.0.1 only
+      ├─ StreamableHTTPServerTransport (@modelcontextprotocol/sdk)
+      └─ Tools → operate directly on `app.vault` (Obsidian's Vault API)
+```
+
+**Request flow, step by step:**
+
+1. Plugin loads → reads settings from `data.json` (`mcpServerEnabled`, `mcpServerPort`). The API key is loaded separately via `app.loadLocalStorage()` — see [Security model](#security-model) for why it's kept out of `data.json`.
+2. If the server is enabled, `VaultForgeMcpServer.start()` registers the three tools below on an `McpServer` instance and starts a plain Node `http.Server` listening on `127.0.0.1:<port>`.
+3. For every incoming request:
+   - Only `POST /mcp` is accepted — everything else gets a `404`.
+   - The `Authorization: Bearer <apiKey>` header is checked — missing or wrong key gets a `401`.
+   - The JSON body is parsed manually (no Express, no body-parser dependency).
+   - A **fresh `StreamableHTTPServerTransport`** is created per request (stateless mode: `sessionIdGenerator: undefined`), which avoids request-ID collisions across concurrent calls.
+   - The MCP server connects to that transport and hands off the request; the transport bridges Node's `req`/`res` to the Web-standard Request/Response objects the MCP protocol expects (via `@hono/node-server` internally), runs the matching tool handler, and writes the JSON-RPC response back.
+4. On disconnect (`res.on("close")`) the transport is closed and cleaned up.
+
+Because the server lives inside the same process as Obsidian, tool handlers call `app.vault` directly — there's no HTTP hop to a separate REST API layer like in the Local REST API + MCP reference setup.
+
+## Available MCP tools
+
+| Tool | Description |
+|---|---|
+| `vault_read` | Reads a note's content by vault-relative path. |
+| `vault_patch` | Creates or edits a note. `mode`: `overwrite` (default), `append`, `prepend`, or `create` (fails if the file already exists). |
+| `search_query` | Case-insensitive substring search across all Markdown notes; returns matching paths with a snippet around each hit. |
+| `skills_list` | Lists Claude Skills found under the configured skills folder (name + description, parsed from each `SKILL.md`'s frontmatter). |
+
+## Security model
+
+A local HTTP server with vault read/write access is a real attack surface on shared machines, so VaultForge applies the same baseline as the Local REST API plugin, plus one deliberate deviation:
+
+- **Localhost-only binding** — the server listens on `127.0.0.1`, never `0.0.0.0`; it is not reachable from the network.
+- **Bearer-token authentication** — a random 24-byte hex API key is generated on first use. Every request must include `Authorization: Bearer <key>`. No key is baked into the code or shipped anywhere — each installation generates its own.
+- **Key storage: device-local, not vault-local.** The key is stored via Obsidian's `app.saveLocalStorage()` / `loadLocalStorage()` API instead of the plugin's `data.json`. `data.json` lives inside the vault and travels with it — through Obsidian Sync, iCloud/Dropbox/OneDrive, a shared team vault, or (if someone ever slipped up) a git commit. `localStorage` values do not; they're tied to Obsidian's own app data on that specific device. So if the vault is ever synced or shared, the bearer token doesn't go along for the ride.
+  - We looked at Electron's `safeStorage` (OS-keychain-backed encryption) first, since the plugin already has Node/Electron access via `isDesktopOnly: true`. It's confirmed unavailable to Obsidian plugins (disabled in the renderer sandbox — see the [Obsidian forum thread](https://forum.obsidian.md/t/electron-safestorage-available/54844)), so `loadLocalStorage` is the practical alternative that still solves the actual risk (the key propagating via a synced/shared vault).
+- **Masked in the UI** — the settings tab shows the key as a password field by default (eye-icon toggle to reveal), so it isn't casually exposed via screenshots or screen shares.
+- **One-click rotation** — a "regenerate" button in settings issues a new key (with a confirmation prompt, since it invalidates already-configured MCP clients) and restarts the server if it's running.
+- **Legacy cleanup** — earlier builds stored the key in `data.json`. `loadSettings()` detects and strips that field automatically on load so it stops lingering in vault files from older installs.
 
 ## Development
 
@@ -259,7 +292,7 @@ This compiles the plugin and copies the build output into `vaultforge/.obsidian/
 2. **Settings → Community plugins** → disable restricted mode if prompted.
 3. Enable **VaultForge** in the plugin list.
 4. Open the VaultForge settings pane and toggle the **MCP server** on — a notice confirms the port, and a masked API key field appears. Click the eye icon to reveal it, or the refresh icon to rotate it.
-5. Verify the server responds using the `curl` command from [Connecting Claude to the server](#connecting-claude-to-the-server).
+5. Verify the server responds using the `curl` command from [Connecting an external MCP client](#connecting-an-external-mcp-client).
 
 **Iterating on code changes:**
 
