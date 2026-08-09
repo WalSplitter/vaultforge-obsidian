@@ -1,6 +1,6 @@
 {
 	"name": "vaultforge",
-	"version": "0.0.4",
+	"version": "0.0.5",
 	"description": "Bring Claude into your Obsidian vault: a local MCP server, an AI chat assistant, and Claude Skills management.",
 	"main": "main.js",
 	"scripts": {

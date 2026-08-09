@@ -362,7 +362,7 @@ class NewSkillModal extends Modal {
 				.setCta()
 				.onClick(() => {
 					if (value.trim().length === 0) return;
-					this.onSubmit(value.trim());
+					void this.onSubmit(value.trim());
 					this.close();
 				})
 		);
@@ -398,7 +398,8 @@ class ConfirmModal extends Modal {
 			.addButton((btn) =>
 				btn
 					.setButtonText(t("buttonConfirm"))
-					.setWarning()
+					.setDestructive()
+					.setCta()
 					.onClick(() => {
 						this.onChoice(true);
 						this.close();
