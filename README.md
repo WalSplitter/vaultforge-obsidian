@@ -278,6 +278,11 @@ A local HTTP server with vault read/write access is a real attack surface on sha
 - **One-click rotation** — a "regenerate" button in settings issues a new key (with a confirmation prompt, since it invalidates already-configured MCP clients) and restarts the server if it's running.
 - **Legacy cleanup** — earlier builds stored the key in `data.json`. `loadSettings()` detects and strips that field automatically on load so it stops lingering in vault files from older installs.
 
+**Vault enumeration and dynamic code generation.** Automated code review of the release build flags two behaviors that are inherent to VaultForge's purpose rather than something to remove:
+
+- `app.vault.getMarkdownFiles()` is used by the `search_query` and `skills_list` MCP tools (see [Available MCP tools](#available-mcp-tools) above) to enumerate notes/skills. An MCP server that exposes vault search and skill discovery necessarily needs to list vault files; the same bearer-token and localhost-only protections above apply to any client calling these tools.
+- The MCP SDK's JSON Schema validation (via the bundled `ajv` dependency) compiles schemas to validator functions using `new Function()`. This is `ajv`'s standard, widely-used validation strategy (not code from user input or vault content) and ships unmodified as a transitive dependency of `@modelcontextprotocol/sdk`.
+
 ## Development
 
 Requirements: Node.js, npm.

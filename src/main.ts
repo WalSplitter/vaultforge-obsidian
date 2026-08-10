@@ -1,4 +1,14 @@
-import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, WorkspaceLeaf } from "obsidian";
+import {
+	App,
+	Modal,
+	Notice,
+	Plugin,
+	PluginSettingTab,
+	Setting,
+	SettingDefinitionItem,
+	TFile,
+	WorkspaceLeaf,
+} from "obsidian";
 import { randomBytes } from "crypto";
 import { VaultForgeMcpServer } from "./mcp/server";
 import { createSkillScaffold, listSkills } from "./skills";
@@ -128,169 +138,199 @@ class VaultForgeSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return [
+			{
+				name: t("settingMcpEnableName"),
+				desc: t("settingMcpEnableDesc"),
+				render: (setting) => {
+					setting.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.mcpServerEnabled).onChange(async (value) => {
+							this.plugin.settings.mcpServerEnabled = value;
+							await this.plugin.saveSettings();
+							try {
+								if (value) {
+									await this.plugin.startMcpServer();
+								} else {
+									await this.plugin.stopMcpServer();
+								}
+							} finally {
+								this.update();
+							}
+						})
+					);
+				},
+			},
+			{
+				name: t("settingMcpPortName"),
+				desc: t("settingMcpPortDesc"),
+				render: (setting) => {
+					setting.addText((text) =>
+						text.setValue(String(this.plugin.settings.mcpServerPort)).onChange(async (value) => {
+							const port = Number(value);
+							if (!Number.isNaN(port)) {
+								this.plugin.settings.mcpServerPort = port;
+								await this.plugin.saveSettings();
+							}
+						})
+					);
+				},
+			},
+			{
+				name: t("settingApiKeyName"),
+				desc: t("settingApiKeyDesc"),
+				render: (setting) => {
+					let apiKeyText: HTMLInputElement;
+					setting.addText((text) => {
+						apiKeyText = text.inputEl;
+						text.setValue(this.plugin.getApiKey());
+						text.inputEl.readOnly = true;
+						text.inputEl.type = "password";
+						text.inputEl.addClass("vaultforge-api-key");
+					});
 
-		new Setting(containerEl)
-			.setName(t("settingMcpEnableName"))
-			.setDesc(t("settingMcpEnableDesc"))
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.mcpServerEnabled).onChange(async (value) => {
-					this.plugin.settings.mcpServerEnabled = value;
-					await this.plugin.saveSettings();
-					try {
-						if (value) {
-							await this.plugin.startMcpServer();
-						} else {
-							await this.plugin.stopMcpServer();
-						}
-					} finally {
-						this.display();
-					}
-				})
-			);
+					setting.addExtraButton((btn) =>
+						btn
+							.setIcon("eye")
+							.setTooltip(t("tooltipShowHideKey"))
+							.onClick(() => {
+								const showing = apiKeyText.type === "text";
+								apiKeyText.type = showing ? "password" : "text";
+								btn.setIcon(showing ? "eye" : "eye-off");
+							})
+					);
 
-		new Setting(containerEl)
-			.setName(t("settingMcpPortName"))
-			.setDesc(t("settingMcpPortDesc"))
-			.addText((text) =>
-				text.setValue(String(this.plugin.settings.mcpServerPort)).onChange(async (value) => {
-					const port = Number(value);
-					if (!Number.isNaN(port)) {
-						this.plugin.settings.mcpServerPort = port;
-						await this.plugin.saveSettings();
-					}
-				})
-			);
-
-		let apiKeyText: HTMLInputElement;
-		const apiKeySetting = new Setting(containerEl)
-			.setName(t("settingApiKeyName"))
-			.setDesc(t("settingApiKeyDesc"))
-			.addText((text) => {
-				apiKeyText = text.inputEl;
-				text.setValue(this.plugin.getApiKey());
-				text.inputEl.readOnly = true;
-				text.inputEl.type = "password";
-				text.inputEl.addClass("vaultforge-api-key");
-			});
-
-		apiKeySetting.addExtraButton((btn) =>
-			btn
-				.setIcon("eye")
-				.setTooltip(t("tooltipShowHideKey"))
-				.onClick(() => {
-					const showing = apiKeyText.type === "text";
-					apiKeyText.type = showing ? "password" : "text";
-					btn.setIcon(showing ? "eye" : "eye-off");
-				})
-		);
-
-		apiKeySetting.addExtraButton((btn) =>
-			btn
-				.setIcon("refresh-cw")
-				.setTooltip(t("tooltipRegenerateKey"))
-				.onClick(async () => {
-					const confirmed = await confirmDialog(this.app, t("confirmRegenerateKey"));
-					if (!confirmed) return;
-					await this.plugin.regenerateApiKey();
-					new Notice(t("noticeApiKeyRegenerated"));
-					this.display();
-				})
-		);
-
-		new Setting(containerEl).setName("Chat").setHeading();
-
-		new Setting(containerEl).setName(t("settingLoginName")).setDesc(t("settingLoginDesc"));
-
-		let cliPathText: HTMLInputElement;
-		new Setting(containerEl)
-			.setName(t("settingCliPathName"))
-			.setDesc(t("settingCliPathDesc"))
-			.addText((text) => {
-				cliPathText = text.inputEl;
-				text.setValue(this.plugin.settings.claudeCliPath);
-				text.setPlaceholder(t("cliPathPlaceholder"));
-				text.onChange(async (value) => {
-					this.plugin.settings.claudeCliPath = value.trim();
-					await this.plugin.saveSettings();
-				});
-			});
-
-		new Setting(containerEl)
-			.setName(t("settingChatModelName"))
-			.setDesc(t("settingChatModelDesc"))
-			.addText((text) =>
-				text.setValue(this.plugin.settings.chatModel).onChange(async (value) => {
-					if (value.trim().length === 0) return;
-					this.plugin.settings.chatModel = value.trim();
-					await this.plugin.saveSettings();
-				})
-			);
-
-		new Setting(containerEl)
-			.setName(t("settingTestConnectionName"))
-			.setDesc(t("settingTestConnectionDesc"))
-			.addButton((btn) =>
-				btn.setButtonText(t("buttonTest")).onClick(async () => {
-					btn.setDisabled(true).setButtonText(t("buttonTesting"));
-					try {
-						await runChatTurn(
-							this.app,
-							{
-								model: this.plugin.settings.chatModel,
-								skillsFolder: this.plugin.settings.skillsFolder,
-								cliPath: cliPathText.value.trim() || undefined,
-							},
-							t("testPingPrompt")
-						);
-						new Notice(t("noticeConnectionSuccess"));
-					} catch (err) {
-						const message = err instanceof AgentCliError ? err.message : (err as Error).message;
-						new Notice(`VaultForge: ${message}`, 10000);
-					} finally {
-						btn.setDisabled(false).setButtonText(t("buttonTest"));
-					}
-				})
-			);
-
-		new Setting(containerEl).setName("Claude Skills").setHeading();
-
-		new Setting(containerEl)
-			.setName(t("settingSkillsFolderName"))
-			.setDesc(t("settingSkillsFolderDesc"))
-			.addText((text) =>
-				text.setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
-					if (value.trim().length === 0) return;
-					this.plugin.settings.skillsFolder = value.trim();
-					await this.plugin.saveSettings();
-					await this.renderSkillsList();
-				})
-			);
-
-		new Setting(containerEl)
-			.addButton((btn) =>
-				btn.setButtonText(t("buttonNewSkill")).onClick(() => {
-					new NewSkillModal(this.app, async (name) => {
-						try {
-							await createSkillScaffold(this.app, this.plugin.settings.skillsFolder, name);
-							new Notice(t("noticeSkillCreated", { name }));
-							await this.renderSkillsList();
-						} catch (err) {
-							new Notice(`VaultForge: ${(err as Error).message}`);
-						}
-					}).open();
-				})
-			)
-			.addButton((btn) =>
-				btn.setButtonText(t("buttonRefreshSkills")).onClick(() => void this.renderSkillsList())
-			);
-
-		this.skillsListEl = containerEl.createDiv({ cls: "vaultforge-skills-list" });
-		void this.renderSkillsList();
+					setting.addExtraButton((btn) =>
+						btn
+							.setIcon("refresh-cw")
+							.setTooltip(t("tooltipRegenerateKey"))
+							.onClick(async () => {
+								const confirmed = await confirmDialog(this.app, t("confirmRegenerateKey"));
+								if (!confirmed) return;
+								await this.plugin.regenerateApiKey();
+								new Notice(t("noticeApiKeyRegenerated"));
+								this.update();
+							})
+					);
+				},
+			},
+			{
+				type: "group",
+				heading: "Chat",
+				items: [
+					{ name: t("settingLoginName"), desc: t("settingLoginDesc") },
+					{
+						name: t("settingCliPathName"),
+						desc: t("settingCliPathDesc"),
+						render: (setting) => {
+							setting.addText((text) => {
+								this.cliPathText = text.inputEl;
+								text.setValue(this.plugin.settings.claudeCliPath);
+								text.setPlaceholder(t("cliPathPlaceholder"));
+								text.onChange(async (value) => {
+									this.plugin.settings.claudeCliPath = value.trim();
+									await this.plugin.saveSettings();
+								});
+							});
+						},
+					},
+					{
+						name: t("settingChatModelName"),
+						desc: t("settingChatModelDesc"),
+						render: (setting) => {
+							setting.addText((text) =>
+								text.setValue(this.plugin.settings.chatModel).onChange(async (value) => {
+									if (value.trim().length === 0) return;
+									this.plugin.settings.chatModel = value.trim();
+									await this.plugin.saveSettings();
+								})
+							);
+						},
+					},
+					{
+						name: t("settingTestConnectionName"),
+						desc: t("settingTestConnectionDesc"),
+						render: (setting) => {
+							setting.addButton((btn) =>
+								btn.setButtonText(t("buttonTest")).onClick(async () => {
+									btn.setDisabled(true).setButtonText(t("buttonTesting"));
+									try {
+										await runChatTurn(
+											this.app,
+											{
+												model: this.plugin.settings.chatModel,
+												skillsFolder: this.plugin.settings.skillsFolder,
+												cliPath: this.cliPathText.value.trim() || undefined,
+											},
+											t("testPingPrompt")
+										);
+										new Notice(t("noticeConnectionSuccess"));
+									} catch (err) {
+										const message = err instanceof AgentCliError ? err.message : (err as Error).message;
+										new Notice(`VaultForge: ${message}`, 10000);
+									} finally {
+										btn.setDisabled(false).setButtonText(t("buttonTest"));
+									}
+								})
+							);
+						},
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Claude Skills",
+				items: [
+					{
+						name: t("settingSkillsFolderName"),
+						desc: t("settingSkillsFolderDesc"),
+						render: (setting) => {
+							setting.addText((text) =>
+								text.setValue(this.plugin.settings.skillsFolder).onChange(async (value) => {
+									if (value.trim().length === 0) return;
+									this.plugin.settings.skillsFolder = value.trim();
+									await this.plugin.saveSettings();
+									await this.renderSkillsList();
+								})
+							);
+						},
+					},
+					{
+						name: "",
+						render: (setting) => {
+							setting
+								.addButton((btn) =>
+									btn.setButtonText(t("buttonNewSkill")).onClick(() => {
+										new NewSkillModal(this.app, async (name) => {
+											try {
+												await createSkillScaffold(this.app, this.plugin.settings.skillsFolder, name);
+												new Notice(t("noticeSkillCreated", { name }));
+												await this.renderSkillsList();
+											} catch (err) {
+												new Notice(`VaultForge: ${(err as Error).message}`);
+											}
+										}).open();
+									})
+								)
+								.addButton((btn) =>
+									btn.setButtonText(t("buttonRefreshSkills")).onClick(() => void this.renderSkillsList())
+								);
+						},
+					},
+					{
+						name: "",
+						render: (setting, group) => {
+							this.skillsListEl?.remove();
+							this.skillsListEl = group.listEl.createDiv({ cls: "vaultforge-skills-list" });
+							void this.renderSkillsList();
+						},
+					},
+				],
+			},
+		];
 	}
 
+	private cliPathText!: HTMLInputElement;
 	private skillsListEl!: HTMLElement;
 
 	async renderSkillsList(): Promise<void> {
@@ -398,7 +438,7 @@ class ConfirmModal extends Modal {
 			.addButton((btn) =>
 				btn
 					.setButtonText(t("buttonConfirm"))
-					.setWarning()
+					.setDestructive()
 					.onClick(() => {
 						this.onChoice(true);
 						this.close();
